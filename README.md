@@ -320,3 +320,19 @@ Step-by-step walkthrough in the `tutorial/` folder:
 ## License
 
 MIT
+
+---
+
+## Docker
+
+Build and run the agent in a container:
+
+```bash
+cp .env.example .env        # fill in your keys
+npm run docker:build        # build image
+npm run docker:up           # start in background
+npm run docker:logs         # follow logs
+npm run docker:down         # stop
+```
+
+The `checkpoints.jsonl` file is mounted as a volume so it persists across restarts.
