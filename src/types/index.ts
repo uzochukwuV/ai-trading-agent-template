@@ -120,3 +120,93 @@ export interface KrakenOrderResult {
   txid: string[];
   descr: { order: string };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extended market data types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OHLCV {
+  timestamp: number;    // Unix timestamp (ms)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  vwap?: number;
+  count?: number;       // Number of trades
+}
+
+export interface OrderBookLevel {
+  price: number;
+  volume: number;
+}
+
+export interface OrderBook {
+  pair: string;
+  bids: OrderBookLevel[];  // Sorted descending by price
+  asks: OrderBookLevel[];  // Sorted ascending by price
+  timestamp: number;
+}
+
+export interface RecentTrade {
+  price: number;
+  volume: number;
+  timestamp: number;
+  side: "buy" | "sell";
+}
+
+export interface PaperBalance {
+  currency: string;
+  balance: number;
+  available: number;
+}
+
+export interface PaperAccountStatus {
+  initialBalance: number;
+  currentBalance: number;
+  equity: number;
+  pnl: number;
+  pnlPercent: number;
+  positions: PaperPosition[];
+}
+
+export interface PaperPosition {
+  asset: string;
+  volume: number;
+  avgEntryPrice: number;
+  currentPrice: number;
+  pnl: number;
+  pnlPercent: number;
+}
+
+/**
+ * Enriched market data combining ticker, OHLC, order book, and trades.
+ * This is what advanced strategies should consume.
+ */
+export interface EnrichedMarketData {
+  // Basic ticker
+  pair: string;
+  price: number;
+  bid: number;
+  ask: number;
+  spreadBps: number;       // Spread in basis points
+  volume24h: number;
+  vwap24h: number;
+  high24h: number;
+  low24h: number;
+
+  // OHLC history
+  ohlc: OHLCV[];           // Recent candles (ascending time order)
+
+  // Order book
+  orderBook?: OrderBook;
+  bidDepth?: number;       // Total bid volume (top 10 levels)
+  askDepth?: number;       // Total ask volume (top 10 levels)
+  orderBookImbalance?: number; // (bidDepth - askDepth) / (bidDepth + askDepth)
+
+  // Recent trades
+  recentTrades?: RecentTrade[];
+  tradeVolumeBias?: number;  // Net buy volume / total volume (-1 to 1)
+
+  timestamp: number;
+}

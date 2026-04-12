@@ -1,23 +1,25 @@
 /**
- * Run the trading agent.
+ * Run the unified trading agent.
  *
  * Usage:
  *   npx ts-node scripts/run-agent.ts
  *
- * Prerequisites:
- *   - Contracts deployed and addresses in .env
- *   - AGENT_ID set in .env (run register-agent.ts first)
- *   - KRAKEN_API_KEY + KRAKEN_API_SECRET set in .env
- *     (set KRAKEN_SANDBOX=true to use paper trading mode)
+ * One loop handles everything:
+ *   1. Check paper account (balances, P&L, positions)
+ *   2. Scan ALL watchlist pairs (enriched data: OHLC + order book + trades)
+ *   3. Analyze signals (RSI, MACD, Bollinger, OB imbalance, trade flow)
+ *   4. Execute trades (RiskRouter validation → Kraken execution)
+ *   5. Manage positions (track buys, monitor for sell signals)
+ *   6. Post checkpoints to ValidationRegistry
+ *   7. Log account summary
  *
- * What it does:
- *   1. Loads the deployed contract addresses
- *   2. Connects the agent to Kraken + on-chain contracts
- *   3. Starts polling the market at POLL_INTERVAL_MS (default 30s)
- *   4. Each tick: decide → validate → explain → checkpoint → (optionally) trade
- *   5. Appends signed checkpoints to checkpoints.jsonl
+ * Env variables:
+ *   POLL_INTERVAL_MS   - Tick interval in ms (default: 120000)
+ *   WATCHLIST          - Comma-separated pairs (default: 20 liquid USD pairs)
+ *   MIN_SCORE_BUY      - Min composite score to BUY (default: 0.60)
+ *   MAX_SCORE_SELL     - Max score to SELL held positions (default: 0.40)
+ *   BASE_TRADE_USD     - Base trade size in USD (default: 100)
+ *   MAX_POSITIONS      - Max concurrent positions (default: 3)
  */
 
-// The agent entrypoint handles everything — this script just ensures .env is
-// loaded and re-exports cleanly as a runnable entrypoint.
 import "../src/agent/index";

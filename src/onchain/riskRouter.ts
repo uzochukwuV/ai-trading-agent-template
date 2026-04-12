@@ -150,12 +150,31 @@ export class RiskRouterClient {
       signed.intent.deadline,
     ];
 
-    const result = await this.contract.submitTradeIntent(intentStruct, signed.signature);
-    return {
-      approved: result[0],
-      reason: result[1],
-      intentHash: signed.intentHash,
-    };
+    try {
+      const tx = await this.contract.submitTradeIntent(intentStruct, signed.signature);
+      const receipt = await tx.wait();
+
+      // Parse events to determine approval
+      const approvedEvent = receipt.logs.find((log: any) =>
+        log.topics[0] === ethers.id("TradeApproved(uint256,bytes32,uint256)")
+      );
+      const rejectedEvent = receipt.logs.find((log: any) =>
+        log.topics[0] === ethers.id("TradeRejected(uint256,bytes32,string)")
+      );
+
+      if (approvedEvent) {
+        return { approved: true, reason: "", intentHash: signed.intentHash };
+      } else if (rejectedEvent) {
+        // Decode the reason from the event data
+        const decoded = ethers.AbiCoder.defaultAbiCoder().decode(["string"], rejectedEvent.data);
+        return { approved: false, reason: decoded[0], intentHash: signed.intentHash };
+      } else {
+        return { approved: false, reason: "No approval/rejection event found", intentHash: signed.intentHash };
+      }
+    } catch (e: unknown) {
+      const err = e as { reason?: string; message?: string };
+      return { approved: false, reason: err.reason || err.message || "Transaction failed", intentHash: signed.intentHash };
+    }
   }
 
   /**

@@ -8,8 +8,13 @@
     "register": "npx ts-node scripts/register-agent.ts",
     "claim": "npx hardhat run scripts/claim-vault.ts --network sepolia",
     "run-agent": "npx ts-node scripts/run-agent.ts",
+    "run-momentum": "npx ts-node scripts/run-agent.ts momentum",
     "dashboard": "npx ts-node scripts/dashboard.ts",
-    "test": "npx hardhat test"
+    "test": "npx hardhat test",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:logs": "docker compose logs -f agent",
+    "docker:down": "docker compose down"
   },
   "dependencies": {
     "@types/express": "^5.0.6",

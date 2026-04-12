@@ -1,0 +1,28 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# AI Trading Agent — docker-compose.yml
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  agent:
+    build: .
+    container_name: ai-trading-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist checkpoints across container restarts
+      - ./checkpoints.jsonl:/app/checkpoints.jsonl
+    # Optional: expose dashboard port if running locally
+    # ports:
+    #   - "3000:3000"
+
+  # ── Alternative: momentum mode ──────────────────────────────────────────────
+  # momentum:
+  #   build: .
+  #   container_name: ai-trading-agent-momentum
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env
+  #   command: ["npx", "ts-node", "--transpile-only", "scripts/run-agent.ts", "momentum"]
+  #   volumes:
+  #     - ./checkpoints.jsonl:/app/checkpoints.jsonl

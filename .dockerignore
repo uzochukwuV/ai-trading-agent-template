@@ -1,0 +1,8 @@
+node_modules/
+artifacts/
+cache/
+checkpoints.jsonl
+.env
+*.log
+.git/
+.vscode/
