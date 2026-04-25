@@ -16,8 +16,17 @@ import * as fs from "fs";
 import * as path from "path";
 
 const app = express();
-const PORT = process.env.DASHBOARD_PORT || 3000;
+const PORT = Number(process.env.DASHBOARD_PORT) || 5000;
+const HOST = process.env.DASHBOARD_HOST || "0.0.0.0";
 const CHECKPOINTS_FILE = path.join(process.cwd(), "checkpoints.jsonl");
+
+// Disable caching in dev so the Replit preview iframe always sees the latest content
+app.use((_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  next();
+});
 
 // ─── API ─────────────────────────────────────────────────────────────────────
 
@@ -734,7 +743,7 @@ window.addEventListener('resize', drawChart);
 
 app.get("/", (_req, res) => res.send(HTML));
 
-app.listen(PORT, () => {
-  console.log(`\n  Dashboard running at http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`\n  Dashboard running at http://${HOST}:${PORT}`);
   console.log(`  Run "npm run run-agent" in another terminal to feed it data.\n`);
 });
