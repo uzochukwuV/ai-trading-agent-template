@@ -98,8 +98,84 @@
   </div>
 </section>
 
+<!-- AI alert banner -->
+<section id="ai-alert" class="ai-alert hidden">
+  <span class="ai-alert-tag">AI ALERT</span>
+  <span id="ai-alert-text"></span>
+  <button class="btn-x" id="ai-alert-close">×</button>
+</section>
+
 <!-- Main grid -->
 <main class="grid">
+
+  <!-- AI Strategist -->
+  <section class="card span-2 card-ai">
+    <div class="card-head">
+      <h2>AI Strategist</h2>
+      <span class="card-sub" id="ai-sub">—</span>
+    </div>
+    <div class="ai-grid">
+      <div class="ai-meta">
+        <div class="ai-row">
+          <span class="ai-label">Model</span>
+          <span id="ai-model" class="ai-val">—</span>
+        </div>
+        <div class="ai-row">
+          <span class="ai-label">Daily budget</span>
+          <span id="ai-budget" class="ai-val">—</span>
+        </div>
+        <div class="ai-budget-bar"><div class="bar-fill" id="ai-budget-fill"></div></div>
+        <div class="ai-row">
+          <span class="ai-label">Session</span>
+          <span id="ai-session" class="ai-val">—</span>
+        </div>
+        <div class="ai-row">
+          <span class="ai-label">Last call</span>
+          <span id="ai-last" class="ai-val">—</span>
+        </div>
+        <div class="ai-row">
+          <span class="ai-label">Regime</span>
+          <span id="ai-regime" class="ai-val pill">—</span>
+        </div>
+        <div class="ai-controls">
+          <button class="btn btn-primary btn-sm" id="btn-ai-run">Ask AI now</button>
+          <label class="ai-budget-input">
+            cap/day
+            <input id="ai-cap" type="number" min="1" max="200" step="1" value="30" />
+          </label>
+          <button class="btn btn-ghost btn-sm" id="btn-ai-cap-apply">Set</button>
+        </div>
+      </div>
+      <div class="ai-thesis-wrap">
+        <div class="ai-thesis-label">Latest thesis</div>
+        <div class="ai-thesis" id="ai-thesis">No call yet — the strategist will run periodically and on emergencies.</div>
+        <div class="ai-actions" id="ai-actions"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- News & Sentiment -->
+  <section class="card">
+    <div class="card-head">
+      <h2>News &amp; sentiment</h2>
+      <span class="card-sub" id="news-sub">—</span>
+    </div>
+    <div class="news-sentiment">
+      <div class="fg-wrap">
+        <div class="fg-label">Fear &amp; Greed</div>
+        <div class="fg-value" id="fg-value">—</div>
+        <div class="fg-bar"><div class="fg-fill" id="fg-fill"></div></div>
+        <div class="fg-text" id="fg-label">—</div>
+      </div>
+      <div class="trending">
+        <div class="trending-label">Trending</div>
+        <div id="trending-list" class="trending-list">—</div>
+      </div>
+    </div>
+    <div class="news-feed" id="news-feed">
+      <div class="empty">no news loaded</div>
+    </div>
+  </section>
 
   <!-- Equity curve -->
   <section class="card span-2">
@@ -251,6 +327,32 @@
       <button class="btn btn-primary" type="submit">Apply</button>
       <div class="form-status" id="cfg-status"></div>
     </form>
+  </section>
+
+  <!-- On-chain checkpointing -->
+  <section class="card">
+    <div class="card-head">
+      <h2>On-chain identity (Sepolia)</h2>
+      <span class="card-sub" id="onchain-sub">—</span>
+    </div>
+    <div class="onchain">
+      <div class="oc-row"><span class="oc-label">Status</span><span id="oc-status" class="ai-val pill pill-warn">—</span></div>
+      <div class="oc-row"><span class="oc-label">Address</span><span id="oc-address" class="oc-mono">—</span></div>
+      <div class="oc-row"><span class="oc-label">Balance</span><span id="oc-balance" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Interval</span>
+        <select id="oc-interval">
+          <option value="3600000">every 1h</option>
+          <option value="21600000" selected>every 6h</option>
+          <option value="43200000">every 12h</option>
+          <option value="86400000">every 24h</option>
+        </select>
+      </div>
+      <div class="oc-controls">
+        <button class="btn btn-primary btn-sm" id="btn-oc-toggle">Enable</button>
+        <button class="btn btn-ghost btn-sm" id="btn-oc-now">Anchor now</button>
+      </div>
+      <div class="oc-list" id="oc-list"><div class="empty">no checkpoints yet</div></div>
+    </div>
   </section>
 
   <!-- API key + docs -->

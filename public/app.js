@@ -293,6 +293,157 @@ function syncCfgInputs(cfg) {
   }
 }
 
+// ── AI strategist ──────────────────────────────────────────────────────────
+
+function renderAI(snap) {
+  const ai = snap.ai || {};
+  const cfg = ai.budget?.cfg || {};
+  const b = ai.budget || {};
+  $("ai-model").textContent = ai.configured ? (ai.model || "—") + (ai.hasMistral ? " · mistral" : ai.hasNvidia ? " · nvidia" : "") : "not configured";
+  const used = b.used || 0;
+  const max = b.cfg?.dailyMax || 0;
+  $("ai-budget").textContent = max ? `${used} / ${max}` : "—";
+  const pct = max ? Math.min(100, (used / max) * 100) : 0;
+  $("ai-budget-fill").style.width = pct + "%";
+  $("ai-budget-fill").style.background = pct > 80 ? "var(--sell)" : pct > 50 ? "var(--warn)" : "var(--buy)";
+  const session = snap.session;
+  $("ai-session").textContent = session ? `${session.session} · ${(session.sizingMultiplier * 100).toFixed(0)}% sizing${!session.allowEntries ? " · entries blocked" : ""}` : "—";
+  $("ai-last").textContent = ai.lastResult ? `${fmtTime(ai.lastResult.ts)} (${ai.lastResult.reason})${ai.lastResult.error ? " — " + ai.lastResult.error : ""}` : "—";
+  const dec = ai.lastResult?.decision || snap.lastDecision;
+  if (dec) {
+    $("ai-regime").textContent = dec.regime || "—";
+    $("ai-regime").className = "ai-val pill " + regimeClass(dec.regime);
+    $("ai-thesis").textContent = dec.thesis || "—";
+    const parts = [];
+    if (dec.configPatch && Object.keys(dec.configPatch).length) {
+      parts.push(`<span class="ai-act ai-act-cfg">cfg patch: ${Object.entries(dec.configPatch).map(([k,v]) => `${k}=${v}`).join(", ")}</span>`);
+    }
+    if (dec.exits?.length) {
+      parts.push(...dec.exits.map(e => `<span class="ai-act ai-act-exit">EXIT ${e.pair} (${e.urgency}): ${e.reason}</span>`));
+    }
+    if (dec.signals?.length) {
+      parts.push(...dec.signals.map(s => `<span class="ai-act ai-act-signal">${s.action} ${s.pair} ${(s.confidence*100).toFixed(0)}%: ${s.reasoning}</span>`));
+    }
+    if (dec.pause) parts.push('<span class="ai-act ai-act-exit">PAUSE</span>');
+    if (dec.resume) parts.push('<span class="ai-act ai-act-cfg">RESUME</span>');
+    $("ai-actions").innerHTML = parts.join("");
+  }
+  $("ai-sub").textContent = `${b.history?.length || 0} calls today · resets in ${fmtCountdown(b.resetsAt)}`;
+
+  // Alert banner
+  if (snap.lastAlert?.text && Date.now() - snap.lastAlert.ts < 60 * 60_000) {
+    if ($("ai-alert").dataset.shownTs !== String(snap.lastAlert.ts)) {
+      $("ai-alert").classList.remove("hidden");
+      $("ai-alert-text").textContent = snap.lastAlert.text;
+      $("ai-alert").dataset.shownTs = String(snap.lastAlert.ts);
+    }
+  }
+}
+
+function regimeClass(r) {
+  switch (r) {
+    case "trending_up": return "pill-ok";
+    case "trending_down": return "pill-bad";
+    case "volatile": return "pill-warn";
+    case "crisis": return "pill-bad";
+    case "ranging": return "pill-muted";
+    default: return "pill-muted";
+  }
+}
+function fmtCountdown(ts) {
+  if (!ts) return "—";
+  const ms = Math.max(0, ts - Date.now());
+  const h = Math.floor(ms / 3600_000);
+  const m = Math.floor((ms % 3600_000) / 60_000);
+  return h + "h " + m + "m";
+}
+
+// ── News ───────────────────────────────────────────────────────────────────
+
+function renderNews(snap) {
+  const news = snap.news;
+  if (!news) {
+    $("news-sub").textContent = "—";
+    $("fg-value").textContent = "—";
+    $("fg-fill").style.width = "0%";
+    $("fg-label").textContent = "—";
+    $("trending-list").textContent = "—";
+    $("news-feed").innerHTML = '<div class="empty">no news loaded</div>';
+    return;
+  }
+  $("news-sub").textContent = news.articles?.length + " headlines · " + fmtTime(news.fetchedAt);
+  const fg = news.sentiment?.fearGreed;
+  if (fg) {
+    $("fg-value").textContent = Math.round(fg.value);
+    $("fg-fill").style.width = Math.min(100, fg.value) + "%";
+    $("fg-fill").style.background = fg.value < 25 ? "var(--sell)" : fg.value < 45 ? "#ff9d3a" : fg.value < 55 ? "var(--hold)" : fg.value < 75 ? "#7ec96b" : "var(--buy)";
+    $("fg-label").textContent = fg.label;
+  } else {
+    $("fg-value").textContent = "—";
+    $("fg-fill").style.width = "0%";
+    $("fg-label").textContent = "—";
+  }
+  const trending = news.sentiment?.trending || [];
+  $("trending-list").innerHTML = trending.length
+    ? trending.map(t => `<span class="trending-pill">${t.symbol}</span>`).join("")
+    : "—";
+
+  const articles = news.articles || [];
+  $("news-feed").innerHTML = articles.length
+    ? articles.map(a => {
+        const url = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${escapeHtml(a.title)}</a>` : escapeHtml(a.title);
+        const meta = [a.source, a.publishedAt ? fmtTime(a.publishedAt) : null].filter(Boolean).join(" · ");
+        return `<div class="news-item"><div class="news-title">${url}</div><div class="news-meta">${meta}</div></div>`;
+      }).join("")
+    : '<div class="empty">no news loaded</div>';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// ── On-chain ───────────────────────────────────────────────────────────────
+
+function renderOnchain(snap) {
+  const oc = snap.onchain;
+  if (!oc || !oc.configured) {
+    $("oc-status").textContent = "NOT CONFIGURED";
+    $("oc-status").className = "ai-val pill pill-muted";
+    $("oc-address").textContent = "set SEPOLIA_RPC_URL + SEPOLIA_PRIVATE_KEY";
+    $("oc-balance").textContent = "—";
+    $("onchain-sub").textContent = "disabled";
+    $("btn-oc-toggle").disabled = true;
+    $("btn-oc-now").disabled = true;
+    return;
+  }
+  $("btn-oc-toggle").disabled = false;
+  $("btn-oc-now").disabled = false;
+  if (oc.enabled) {
+    $("oc-status").textContent = "ENABLED";
+    $("oc-status").className = "ai-val pill pill-ok";
+    $("btn-oc-toggle").textContent = "Disable";
+  } else {
+    $("oc-status").textContent = "DISABLED";
+    $("oc-status").className = "ai-val pill pill-warn";
+    $("btn-oc-toggle").textContent = "Enable";
+  }
+  $("oc-address").textContent = oc.address || "—";
+  $("oc-balance").textContent = oc.balanceEth != null ? oc.balanceEth.toFixed(5) + " ETH" : "—";
+  $("onchain-sub").textContent = `${oc.checkpoints?.length || 0} anchors`;
+  if (document.activeElement?.id !== "oc-interval") {
+    $("oc-interval").value = String(oc.intervalMs);
+  }
+  const list = oc.checkpoints || [];
+  $("oc-list").innerHTML = list.length
+    ? list.slice(0, 5).map(c => `
+        <div class="oc-item">
+          <span class="oc-time">${fmtTime(c.ts)}</span>
+          <span class="oc-eq">eq $${c.payloadSummary?.equity?.toFixed(2) ?? "—"}</span>
+          <a href="${c.explorerUrl}" target="_blank" rel="noopener" class="oc-tx">${c.txHash.slice(0,10)}…${c.txHash.slice(-6)}</a>
+        </div>`).join("")
+    : '<div class="empty">no checkpoints yet</div>';
+}
+
 // ── Live update loop ───────────────────────────────────────────────────────
 
 let chartCache = [];
@@ -309,6 +460,9 @@ async function refreshAll() {
     renderScanner(scanner);
     renderTrades(trades);
     renderSignals(signals);
+    renderAI(snap);
+    renderNews(snap);
+    renderOnchain(snap);
     chartCache = eq;
     drawEquity(eq);
   } catch (e) {
@@ -392,6 +546,47 @@ document.addEventListener("DOMContentLoaded", () => {
     const r = await authedApi("/api/control/config", patch);
     status.textContent = r.ok ? "Config applied" : (r.error || "Error");
     status.className = r.ok ? "form-status ok" : "form-status err";
+    refreshAll();
+  });
+
+  // AI strategist
+  $("btn-ai-run").addEventListener("click", async () => {
+    const btn = $("btn-ai-run"); const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "thinking…";
+    try {
+      const r = await authedApi("/api/ai/run", {});
+      if (!r.ok) alert("AI: " + (r.error || "failed"));
+    } catch (e) { alert("AI error: " + e.message); }
+    finally { btn.disabled = false; btn.textContent = orig; refreshAll(); }
+  });
+  $("btn-ai-cap-apply").addEventListener("click", async () => {
+    const v = Number($("ai-cap").value);
+    const r = await authedApi("/api/ai/budget", { dailyMax: v });
+    if (!r.ok) alert(r.error || "failed");
+    refreshAll();
+  });
+  $("ai-alert-close").addEventListener("click", () => $("ai-alert").classList.add("hidden"));
+
+  // On-chain controls
+  $("btn-oc-toggle").addEventListener("click", async () => {
+    const isOn = $("btn-oc-toggle").textContent.trim().toLowerCase().startsWith("dis");
+    const r = await authedApi("/api/onchain/enable", { enabled: !isOn });
+    if (!r.ok) alert(r.error || "failed");
+    refreshAll();
+  });
+  $("btn-oc-now").addEventListener("click", async () => {
+    if (!confirm("Send a Sepolia transaction now to anchor a checkpoint?")) return;
+    const btn = $("btn-oc-now"); const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "broadcasting…";
+    try {
+      const r = await authedApi("/api/onchain/checkpoint", {});
+      if (!r.ok) alert(r.error || "failed");
+    } catch (e) { alert("error: " + e.message); }
+    finally { btn.disabled = false; btn.textContent = orig; refreshAll(); }
+  });
+  $("oc-interval").addEventListener("change", async (e) => {
+    const r = await authedApi("/api/onchain/interval", { intervalMs: Number(e.target.value) });
+    if (!r.ok) alert(r.error || "failed");
     refreshAll();
   });
 

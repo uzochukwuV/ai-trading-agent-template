@@ -190,6 +190,75 @@ app.post("/api/control/config", requireApiKey, (req, res) => {
   res.json({ ok: true, cfg });
 });
 
+// ─── AI strategist ───────────────────────────────────────────────────────────
+
+app.get("/api/ai/status", (_req, res) => {
+  res.json({
+    ...engine.ai.publicStatus(),
+    session: engine.snapshot().session,
+    lastDecision: engine.snapshot().lastDecision,
+    lastAlert: engine.snapshot().lastAlert,
+  });
+});
+
+app.post("/api/ai/run", requireApiKey, async (_req, res) => {
+  const result = await engine.runAI("manual");
+  res.json(result);
+});
+
+app.post("/api/ai/budget", requireApiKey, (req, res) => {
+  const dailyMax = Number(req.body?.dailyMax);
+  if (!Number.isFinite(dailyMax) || dailyMax < 1) {
+    res.status(400).json({ error: "dailyMax must be a positive number" });
+    return;
+  }
+  engine.setAIBudget(dailyMax);
+  res.json({ ok: true, budget: engine.ai.budget.publicState() });
+});
+
+// ─── News & sentiment ────────────────────────────────────────────────────────
+
+app.get("/api/news", async (req, res) => {
+  const force = req.query.force === "1";
+  try {
+    const snap = await engine.news.get(force);
+    res.json(snap);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// ─── On-chain checkpointing (ERC-8004 style) ─────────────────────────────────
+
+app.get("/api/onchain", (_req, res) => {
+  res.json(engine.onchain.publicState());
+});
+
+app.post("/api/onchain/enable", requireApiKey, (req, res) => {
+  engine.setOnchainEnabled(req.body?.enabled !== false);
+  res.json({ ok: true, state: engine.onchain.publicState() });
+});
+
+app.post("/api/onchain/interval", requireApiKey, (req, res) => {
+  const ms = Number(req.body?.intervalMs);
+  if (!Number.isFinite(ms) || ms < 60_000) {
+    res.status(400).json({ error: "intervalMs must be >= 60000" });
+    return;
+  }
+  engine.setOnchainIntervalMs(ms);
+  res.json({ ok: true, state: engine.onchain.publicState() });
+});
+
+app.post("/api/onchain/checkpoint", requireApiKey, async (_req, res) => {
+  if (!engine.onchain.isConfigured()) {
+    res.status(400).json({ error: "Onchain not configured (missing SEPOLIA_RPC_URL or SEPOLIA_PRIVATE_KEY)" });
+    return;
+  }
+  const cp = await engine.writeOnchainCheckpoint();
+  if (!cp) { res.status(500).json({ error: "checkpoint failed — see /api/onchain for errors" }); return; }
+  res.json({ ok: true, checkpoint: cp });
+});
+
 // ─── Static dashboard ────────────────────────────────────────────────────────
 
 app.use(express.static(PUBLIC_DIR));

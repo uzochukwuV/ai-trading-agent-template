@@ -18,10 +18,16 @@ import { SignalBus } from "./signal-bus";
 import { RiskManager } from "./risk-manager";
 import { PaperBroker } from "./paper-broker";
 import { Portfolio } from "./portfolio";
+import { AICallBudget, BudgetReason } from "./budget";
+import { NewsFeed } from "./news-feed";
+import { evaluateSession, SessionState } from "./time-filter";
+import { AIStrategist, StrategistBriefing, StrategistDecision, StrategistResult } from "./ai-strategist";
+import { OnchainCheckpointer } from "./onchain-checkpoint";
 import { appendJsonl, dataPath, statePath, readJson, writeJson } from "./persistence";
 
 const TRADES_FILE = dataPath("trades.jsonl");
 const SIGNALS_FILE = dataPath("signals.jsonl");
+const AI_LOG_FILE = dataPath("ai-decisions.jsonl");
 const ENGINE_STATE_FILE = statePath("engine-state.json");
 
 export interface EngineEvents {
@@ -37,6 +43,9 @@ export class TradingEngine extends EventEmitter {
   portfolio: Portfolio;
   risk: RiskManager;
   broker: PaperBroker;
+  ai: AIStrategist;
+  news: NewsFeed;
+  onchain: OnchainCheckpointer;
 
   private candles = new Map<string, PairCandle[]>();
   private ticks = new Map<string, Tick>();
@@ -47,6 +56,19 @@ export class TradingEngine extends EventEmitter {
   private syntheticMode = false;
   private lastTickAt = 0;
   private startedAt = 0;
+
+  // AI / regime tracking
+  private session: SessionState = evaluateSession();
+  private lastPeriodicAiAt = 0;
+  private periodicAiMs = 50 * 60 * 1000;        // ~28-30 calls/day baseline
+  private lastEmergencyAiAt = 0;
+  private emergencyCooldownMs = 15 * 60 * 1000;
+  private emergencyDdTriggerPct = 5;            // %
+  private emergencyLossPerPositionPct = 4;      // % of equity
+  private aiInflight = false;
+  private lastDecision: StrategistDecision | null = null;
+  private lastAlert: { ts: number; text: string } | null = null;
+  private newsCheckTimer: NodeJS.Timeout | null = null;
 
   constructor(cfg: EngineConfig) {
     super();
@@ -67,6 +89,19 @@ export class TradingEngine extends EventEmitter {
     }
     this.risk = new RiskManager(this.cfg, this.portfolio.equity(this.ticks) || this.cfg.startingCashUsd);
     this.broker = new PaperBroker(this.cfg);
+
+    const budget = new AICallBudget({
+      dailyMax: Number(process.env.AI_DAILY_MAX) || 30,
+    });
+    this.news = new NewsFeed(process.env.PRISM_API_KEY);
+    this.ai = new AIStrategist({
+      budget,
+      news: this.news,
+      mistralKey: process.env.MISTRAL_API_KEY,
+      nvidiaKey: process.env.NVIDIA_API_KEY,
+      model: process.env.MISTRAL_MODEL || "mistral-large-latest",
+    });
+    this.onchain = new OnchainCheckpointer(process.env.SEPOLIA_RPC_URL, process.env.SEPOLIA_PRIVATE_KEY);
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -77,6 +112,9 @@ export class TradingEngine extends EventEmitter {
     this.startedAt = Date.now();
     void this.warmup().then(() => {
       this.scheduleNext();
+      // Background news refresh every 30 min (cached internally)
+      this.newsCheckTimer = setInterval(() => { void this.news.get().catch(() => undefined); }, 30 * 60_000);
+      void this.news.get().catch(() => undefined);
     });
   }
 
@@ -84,6 +122,8 @@ export class TradingEngine extends EventEmitter {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.newsCheckTimer) clearInterval(this.newsCheckTimer);
+    this.newsCheckTimer = null;
     this.persist();
   }
 
@@ -117,6 +157,16 @@ export class TradingEngine extends EventEmitter {
       performance: this.portfolio.performance(),
       ticksTracked: this.ticks.size,
       cooldownUntil: Object.fromEntries(this.cooldownUntil),
+      session: this.session,
+      ai: this.ai.publicStatus(),
+      news: this.news.cached() ? {
+        fetchedAt: this.news.cached()!.fetchedAt,
+        articles: this.news.cached()!.articles.slice(0, 12),
+        sentiment: this.news.cached()!.sentiment,
+      } : null,
+      onchain: this.onchain.publicState(),
+      lastAlert: this.lastAlert,
+      lastDecision: this.lastDecision,
     };
   }
 
@@ -167,6 +217,145 @@ export class TradingEngine extends EventEmitter {
 
   pause(reason?: string) { this.risk.pause(reason); this.persist(); }
   resume() { this.risk.resume(); this.persist(); }
+
+  // ─── AI strategist controls ────────────────────────────────────────────────
+
+  async runAI(reason: BudgetReason = "manual"): Promise<StrategistResult> {
+    if (this.aiInflight) {
+      return { ok: false, reason, ts: Date.now(), error: "AI call already in flight" };
+    }
+    this.aiInflight = true;
+    try {
+      const briefing = await this.buildBriefing(reason);
+      const result = await this.ai.run(reason, briefing);
+      if (result.ok && result.decision) {
+        this.applyDecision(result.decision, reason);
+        try { appendJsonl(AI_LOG_FILE, { at: result.ts, reason, decision: result.decision, model: result.model, latencyMs: result.latencyMs }); } catch { /* ignore */ }
+      }
+      return result;
+    } finally {
+      this.aiInflight = false;
+    }
+  }
+
+  private async buildBriefing(reason: BudgetReason): Promise<StrategistBriefing> {
+    const equity = this.portfolio.equity(this.ticks);
+    const exposureUsd = this.portfolio.positionsValue(this.ticks);
+    const risk = this.risk.updateState({ equity, cash: this.portfolio.cash, exposureUsd });
+    const perf = this.portfolio.performance();
+    const open = this.openPositionsView().map(p => ({
+      pair: p.pair, side: p.side, qty: p.qty,
+      entryPrice: p.entryPrice, currentPrice: p.currentPrice,
+      unrealizedPnl: p.unrealizedPnl, unrealizedPnlPct: p.unrealizedPnlPct,
+      holdMinutes: (Date.now() - p.openedAt) / 60_000,
+      stopPrice: p.stopPrice, takeProfit: p.takeProfit,
+    }));
+    const recentClosed = this.portfolio.closed.slice(-15).map(c => ({
+      pair: c.pair, side: c.side, pnlUsd: c.pnlUsd, pnlPct: c.pnlPct,
+      reasonClose: c.reasonClose,
+      holdMinutes: (c.closedAt - c.openedAt) / 60_000,
+    }));
+    const newsSnap = await this.news.get().catch(() => null);
+    const news = {
+      headlines: newsSnap?.articles.slice(0, 12).map(a => `${a.title}${a.source ? ` (${a.source})` : ""}`) ?? [],
+      fearGreed: newsSnap?.sentiment.fearGreed?.value ?? null,
+      fearGreedLabel: newsSnap?.sentiment.fearGreed?.label ?? null,
+      trending: newsSnap?.sentiment.trending?.map(t => t.symbol) ?? [],
+    };
+    return {
+      ts: Date.now(),
+      session: this.session,
+      portfolio: {
+        equity, cash: this.portfolio.cash,
+        realizedPnl: this.portfolio.realizedPnl,
+        unrealizedPnl: this.portfolio.unrealizedPnl(this.ticks),
+        feesPaid: this.portfolio.feesPaid,
+        closedCount: perf.closedCount,
+        winRate: perf.winRate,
+        profitFactor: isFinite(perf.profitFactor) ? perf.profitFactor : 0,
+        sharpe: perf.sharpe,
+        maxDrawdownPct: perf.maxDrawdownPct,
+      },
+      risk,
+      cfg: this.cfg,
+      open,
+      scanner: this.scannerView(),
+      recentClosed,
+      news,
+    };
+  }
+
+  private applyDecision(d: StrategistDecision, reason: BudgetReason): void {
+    this.lastDecision = d;
+    if (d.alert) this.lastAlert = { ts: Date.now(), text: d.alert };
+
+    if (d.pause && !this.risk.state.paused) {
+      this.pause("AI: " + (d.alert ?? d.thesis ?? "regime change"));
+    } else if (d.resume && this.risk.state.paused) {
+      this.resume();
+    }
+
+    if (d.configPatch && Object.keys(d.configPatch).length) {
+      this.cfg = { ...this.cfg, ...d.configPatch };
+    }
+
+    // Force-exit positions the AI flagged. high urgency = immediate close.
+    for (const ex of d.exits) {
+      const pos = this.portfolio.open.find(p => p.pair === ex.pair);
+      if (!pos) continue;
+      const tk = this.ticks.get(pos.pair);
+      if (!tk) continue;
+      if (ex.urgency === "high") {
+        this.closePosition(pos, tk, `AI exit (${ex.urgency}): ${ex.reason}`);
+      } else {
+        // For low/med urgency, tighten the stop aggressively instead of
+        // closing immediately — gives the position a chance if it recovers.
+        const ref = pos.side === "BUY" ? tk.bid : tk.ask;
+        const tighten = ex.urgency === "med" ? 0.4 : 0.8;     // % away
+        if (pos.side === "BUY") {
+          const candidate = ref * (1 - tighten / 100);
+          pos.stopPrice = Math.max(pos.stopPrice, candidate);
+        } else {
+          const candidate = ref * (1 + tighten / 100);
+          pos.stopPrice = Math.min(pos.stopPrice, candidate);
+        }
+      }
+    }
+
+    // Inject AI-published signals as weighted entries on the bus.
+    for (const s of d.signals) {
+      if (s.action === "HOLD") continue;
+      this.submitSignal({
+        source: "llm",
+        origin: "ai-strategist",
+        pair: s.pair,
+        action: s.action,
+        confidence: s.confidence,
+        reasoning: `[${d.regime}] ${s.reasoning}`,
+        ttlMs: 20 * 60_000,
+        weight: 1.2,
+      });
+    }
+    this.persist();
+  }
+
+  setAIBudget(dailyMax: number) {
+    this.ai.budget.cfg.dailyMax = Math.max(1, Math.min(500, Math.floor(dailyMax)));
+    (this.ai.budget as any).persist?.();
+  }
+
+  // ─── On-chain checkpointing controls ───────────────────────────────────────
+
+  setOnchainEnabled(on: boolean) { this.onchain.setEnabled(on); }
+  setOnchainIntervalMs(ms: number) { this.onchain.setIntervalMs(ms); }
+  async writeOnchainCheckpoint() {
+    return this.onchain.writeCheckpoint({
+      equity: this.portfolio.equity(this.ticks),
+      trades: this.portfolio.closed.length,
+      positions: this.portfolio.open.length,
+      extra: { ts: Date.now() },
+    });
+  }
 
   closeAll(reason = "manual flatten"): number {
     let n = 0;
@@ -262,14 +451,67 @@ export class TradingEngine extends EventEmitter {
     // 3) snapshot equity + risk state
     this.portfolio.recordEquity(this.ticks);
     const equity = this.portfolio.equity(this.ticks);
-    this.risk.updateState({ equity, cash: this.portfolio.cash, exposureUsd: this.portfolio.positionsValue(this.ticks) });
+    const risk = this.risk.updateState({ equity, cash: this.portfolio.cash, exposureUsd: this.portfolio.positionsValue(this.ticks) });
+
+    // 4) refresh session info
+    this.session = evaluateSession();
+
+    // 5) AI strategist triggers (rate-limited and budgeted)
+    void this.maybeTriggerAI(risk).catch(e => console.warn("[engine] ai trigger:", e));
+
+    // 6) on-chain checkpoint (opt-in, every N hours)
+    if (this.onchain.shouldCheckpoint()) {
+      void this.writeOnchainCheckpoint().catch(e => console.warn("[engine] onchain:", e));
+    }
+
     this.persistThrottled();
     this.emit("tick", { ts });
+  }
+
+  /**
+   * Decide whether to spend an AI call this tick. Three triggers:
+   *   1. Periodic   — at most once per `periodicAiMs` (default 50 min)
+   *   2. Drawdown   — current drawdown crosses threshold and we haven't
+   *                   asked the AI in `emergencyCooldownMs`
+   *   3. Position   — any open position is more than `emergencyLossPerPositionPct`
+   *                   underwater relative to equity (a real loser)
+   */
+  private async maybeTriggerAI(risk: { drawdownPct: number; killSwitch: boolean; paused: boolean }): Promise<void> {
+    if (!this.ai.isConfigured()) return;
+    if (this.aiInflight) return;
+    const now = Date.now();
+    const equity = this.portfolio.equity(this.ticks);
+
+    // Emergency: drawdown crossed
+    if (!risk.killSwitch && risk.drawdownPct >= this.emergencyDdTriggerPct
+        && now - this.lastEmergencyAiAt > this.emergencyCooldownMs) {
+      this.lastEmergencyAiAt = now;
+      await this.runAI("emergency");
+      return;
+    }
+
+    // Emergency: a single position is bleeding badly
+    for (const p of this.openPositionsView()) {
+      const lossPctEquity = equity > 0 ? -Math.min(0, p.unrealizedPnl) / equity * 100 : 0;
+      if (lossPctEquity >= this.emergencyLossPerPositionPct
+          && now - this.lastEmergencyAiAt > this.emergencyCooldownMs) {
+        this.lastEmergencyAiAt = now;
+        await this.runAI("event");
+        return;
+      }
+    }
+
+    // Periodic
+    if (now - this.lastPeriodicAiAt >= this.periodicAiMs) {
+      this.lastPeriodicAiAt = now;
+      await this.runAI("periodic");
+    }
   }
 
   private async evaluatePair(pair: string): Promise<void> {
     if (this.risk.state.killSwitch || this.risk.state.paused) return;
     if (this.portfolio.open.some(p => p.pair === pair)) return; // managed elsewhere
+    if (!this.session.allowEntries) return;                     // time-of-day filter
     const decision = this.bus.aggregate(pair);
     if (decision.action === "HOLD") return;
     const tk = this.ticks.get(pair);
@@ -277,12 +519,14 @@ export class TradingEngine extends EventEmitter {
     const cs = this.candles.get(pair);
     const atr = cs ? scoreMarket(cs).indicators.atr : null;
     const exposureByPair = this.portfolio.exposureByPair(this.ticks);
+    // Apply session sizing multiplier by adjusting confidence (which feeds risk budget)
+    const sessionAdjConf = Math.max(0.1, Math.min(1, decision.confidence * (this.session.sizingMultiplier ?? 1)));
     const sizing = this.risk.evaluateEntry({
       side: decision.action,
       pair,
       tick: tk,
       atr,
-      confidence: decision.confidence,
+      confidence: sessionAdjConf,
       cashUsd: this.portfolio.cash,
       equityUsd: this.portfolio.equity(this.ticks),
       exposureByPair,
@@ -290,7 +534,9 @@ export class TradingEngine extends EventEmitter {
       cooldownUntil: this.cooldownUntil,
     });
     if (!sizing.ok || !sizing.qty || !sizing.notionalUsd) return;
-    this.openPosition(decision.action, pair, tk, sizing.qty!, sizing.stopPrice!, sizing.takeProfit!, decision.reasoning, decision.contributing[0]?.source ?? "technical");
+    this.openPosition(decision.action, pair, tk, sizing.qty!, sizing.stopPrice!, sizing.takeProfit!,
+      `${decision.reasoning} | session ${this.session.session}`,
+      decision.contributing[0]?.source ?? "technical");
   }
 
   private openPosition(side: Action, pair: string, tick: Tick, qty: number, stop: number, tp: number, reasoning: string, source: any) {
