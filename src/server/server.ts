@@ -228,6 +228,29 @@ app.get("/api/news", async (req, res) => {
   }
 });
 
+// ─── Prism vendor signals ────────────────────────────────────────────────────
+
+app.get("/api/prism", (_req, res) => {
+  const cached = engine.prismSignals.cached();
+  res.json({
+    configured: engine.prismSignals.isConfigured(),
+    snapshot: cached,
+  });
+});
+
+app.post("/api/prism/refresh", requireApiKey, async (_req, res) => {
+  if (!engine.prismSignals.isConfigured()) {
+    res.status(400).json({ error: "PRISM_API_KEY not configured" });
+    return;
+  }
+  try {
+    const r = await engine.refreshPrismSignals(true);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 // ─── On-chain checkpointing (ERC-8004 style) ─────────────────────────────────
 
 app.get("/api/onchain", (_req, res) => {

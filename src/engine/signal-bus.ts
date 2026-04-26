@@ -12,6 +12,7 @@ import { Signal, SignalSource, Action } from "./types";
 const DEFAULT_WEIGHTS: Record<SignalSource, number> = {
   technical: 1.0,
   llm: 0.8,
+  prism: 0.9,                // independent multi-indicator vendor signal
   external: 0.6,             // external sources start with lower trust
   "trailing-stop": 1.0,
   "stop-loss": 1.0,

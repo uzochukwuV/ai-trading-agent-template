@@ -51,6 +51,15 @@ export interface StrategistBriefing {
   scanner: ScannerRow[];
   recentClosed: Array<{ pair: string; side: string; pnlUsd: number; pnlPct: number; reasonClose: string; holdMinutes: number }>;
   news: { headlines: string[]; fearGreed: number | null; fearGreedLabel: string | null; trending: string[] };
+  prism?: Array<{
+    pair: string;
+    signal: string;                // strong_bullish/bullish/neutral/bearish/strong_bearish
+    strength: string;              // weak/moderate/strong
+    net: number;                   // bullish - bearish score
+    rsi?: number;
+    macdHist?: number;
+    reasons: string[];
+  }>;
 }
 
 export interface StrategistDecision {
@@ -211,6 +220,7 @@ function buildPrompt(b: StrategistBriefing, reason: BudgetReason): string {
     scanner: compactScanner,
     recent_closed: compactClosed,
     news: b.news,
+    prism_signals: b.prism ?? [],
   }, null, 0);
 
   return [

@@ -36,6 +36,7 @@ export interface Indicators {
 export type SignalSource =
   | "technical"
   | "llm"
+  | "prism"
   | "external"
   | "trailing-stop"
   | "stop-loss"

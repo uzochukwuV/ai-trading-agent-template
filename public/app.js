@@ -402,6 +402,64 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
+// ── Prism vendor signals ───────────────────────────────────────────────────
+
+function renderPrism(snap) {
+  const p = snap.prism;
+  const grid = $("prism-grid");
+  if (!p) {
+    $("prism-sub").textContent = "not configured";
+    grid.innerHTML = '<div class="empty">no prism data yet — first poll runs at engine start</div>';
+    return;
+  }
+  const ageMin = Math.round((Date.now() - p.fetchedAt) / 60_000);
+  const nextIn = Math.max(0, Math.round((p.cacheUntil - Date.now()) / 60_000));
+  const counts = { strong_bullish:0, bullish:0, neutral:0, bearish:0, strong_bearish:0 };
+  for (const e of p.entries) counts[e.overall] = (counts[e.overall] || 0) + 1;
+  $("prism-sub").textContent =
+    `${p.entries.length} pairs · ${ageMin}m old · refresh in ${nextIn}m` +
+    (p.degraded?.length ? ` · degraded: ${p.degraded.join(",")}` : "") +
+    (p.errors?.length ? ` · ${p.errors.length} errors` : "");
+  if (!p.entries.length) {
+    grid.innerHTML = '<div class="empty">prism returned no signals — markets may be flat or symbols degraded</div>';
+    return;
+  }
+  grid.innerHTML = p.entries.map(e => {
+    const cls = prismCellClass(e.overall);
+    const reasons = (e.activeSignals || []).map(a => `${a.type}:${a.signal}`).join(", ") || "—";
+    const rsi = e.indicators?.rsi != null ? e.indicators.rsi.toFixed(1) : "—";
+    const macdH = e.indicators?.macdHistogram != null ? e.indicators.macdHistogram.toFixed(2) : "—";
+    const px = e.currentPrice != null ? "$" + (e.currentPrice < 1 ? e.currentPrice.toFixed(5) : e.currentPrice.toFixed(2)) : "—";
+    return `
+      <div class="prism-cell ${cls}">
+        <div class="prism-row1">
+          <span class="prism-pair">${e.pair}</span>
+          <span class="prism-px">${px}</span>
+        </div>
+        <div class="prism-row2">
+          <span class="prism-overall">${prismLabel(e.overall)}</span>
+          <span class="prism-net">net ${e.netScore >= 0 ? "+" : ""}${e.netScore}</span>
+        </div>
+        <div class="prism-row3">
+          <span>RSI ${rsi}</span><span>MACD-H ${macdH}</span>
+        </div>
+        <div class="prism-reasons">${escapeHtml(reasons)}</div>
+      </div>`;
+  }).join("");
+}
+function prismCellClass(o) {
+  switch (o) {
+    case "strong_bullish": return "prism-sb";
+    case "bullish": return "prism-b";
+    case "bearish": return "prism-be";
+    case "strong_bearish": return "prism-sbe";
+    default: return "prism-n";
+  }
+}
+function prismLabel(o) {
+  return ({ strong_bullish: "STRONG BUY", bullish: "BUY", neutral: "NEUTRAL", bearish: "SELL", strong_bearish: "STRONG SELL" })[o] || o;
+}
+
 // ── On-chain ───────────────────────────────────────────────────────────────
 
 function renderOnchain(snap) {
@@ -462,6 +520,7 @@ async function refreshAll() {
     renderSignals(signals);
     renderAI(snap);
     renderNews(snap);
+    renderPrism(snap);
     renderOnchain(snap);
     chartCache = eq;
     drawEquity(eq);
@@ -566,6 +625,17 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshAll();
   });
   $("ai-alert-close").addEventListener("click", () => $("ai-alert").classList.add("hidden"));
+
+  // Prism refresh
+  $("btn-prism-refresh").addEventListener("click", async () => {
+    const btn = $("btn-prism-refresh"); const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "polling…";
+    try {
+      const r = await authedApi("/api/prism/refresh", {});
+      if (!r.ok) alert("Prism: " + (r.error || "failed"));
+    } catch (e) { alert("Prism error: " + e.message); }
+    finally { btn.disabled = false; btn.textContent = orig; refreshAll(); }
+  });
 
   // On-chain controls
   $("btn-oc-toggle").addEventListener("click", async () => {

@@ -329,3 +329,23 @@ a { color: var(--accent); }
 .oc-tx:hover { text-decoration: underline; }
 #oc-interval { background: var(--bg3); color: var(--text); border: 1px solid var(--border); padding: 3px 6px; border-radius: 3px; font-size: 11px; }
 .empty { color: var(--muted); font-size: 11px; font-style: italic; padding: 8px 0; text-align: center; }
+
+/* ── Prism Vendor Signals ────────────────────────────────────────────────── */
+.prism-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.prism-cell { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; border-left-width: 3px; }
+.prism-cell.prism-sb  { border-left-color: var(--buy); background: linear-gradient(90deg, rgba(46,160,107,0.10), transparent 60%); }
+.prism-cell.prism-b   { border-left-color: rgba(46,160,107,0.6); }
+.prism-cell.prism-n   { border-left-color: var(--border); }
+.prism-cell.prism-be  { border-left-color: rgba(217,76,62,0.6); }
+.prism-cell.prism-sbe { border-left-color: var(--sell); background: linear-gradient(90deg, rgba(217,76,62,0.10), transparent 60%); }
+.prism-row1 { display: flex; justify-content: space-between; align-items: baseline; }
+.prism-pair { font-weight: 700; color: var(--text); letter-spacing: 0.4px; }
+.prism-px { color: var(--gold); font-size: 11px; font-family: 'SF Mono', Menlo, monospace; }
+.prism-row2 { display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+.prism-overall { font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--bg2); border: 1px solid var(--border); letter-spacing: 0.3px; }
+.prism-cell.prism-sb .prism-overall, .prism-cell.prism-b .prism-overall { color: var(--buy); border-color: rgba(46,160,107,0.4); }
+.prism-cell.prism-sbe .prism-overall, .prism-cell.prism-be .prism-overall { color: var(--sell); border-color: rgba(217,76,62,0.4); }
+.prism-cell.prism-n .prism-overall { color: var(--muted); }
+.prism-net { color: var(--muted); font-family: 'SF Mono', Menlo, monospace; }
+.prism-row3 { display: flex; gap: 10px; color: var(--muted); font-size: 10.5px; font-family: 'SF Mono', Menlo, monospace; }
+.prism-reasons { color: var(--muted); font-size: 10.5px; line-height: 1.4; border-top: 1px dashed var(--border); padding-top: 4px; margin-top: 2px; }

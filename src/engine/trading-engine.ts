@@ -20,6 +20,7 @@ import { PaperBroker } from "./paper-broker";
 import { Portfolio } from "./portfolio";
 import { AICallBudget, BudgetReason } from "./budget";
 import { NewsFeed } from "./news-feed";
+import { PrismSignals, prismToAction, PrismSignalEntry } from "./prism-signals";
 import { evaluateSession, SessionState } from "./time-filter";
 import { AIStrategist, StrategistBriefing, StrategistDecision, StrategistResult } from "./ai-strategist";
 import { OnchainCheckpointer } from "./onchain-checkpoint";
@@ -45,6 +46,7 @@ export class TradingEngine extends EventEmitter {
   broker: PaperBroker;
   ai: AIStrategist;
   news: NewsFeed;
+  prismSignals: PrismSignals;
   onchain: OnchainCheckpointer;
 
   private candles = new Map<string, PairCandle[]>();
@@ -70,6 +72,12 @@ export class TradingEngine extends EventEmitter {
   private lastAlert: { ts: number; text: string } | null = null;
   private newsCheckTimer: NodeJS.Timeout | null = null;
 
+  // Prism signals
+  private prismRefreshTimer: NodeJS.Timeout | null = null;
+  private prismRefreshMs = 10 * 60 * 1000;     // refresh every 10 min
+  private prismSignalTtlMs = 12 * 60 * 1000;   // bus signals expire after 12 min
+  private prismInflight = false;
+
   constructor(cfg: EngineConfig) {
     super();
     this.cfg = cfg;
@@ -94,6 +102,7 @@ export class TradingEngine extends EventEmitter {
       dailyMax: Number(process.env.AI_DAILY_MAX) || 30,
     });
     this.news = new NewsFeed(process.env.PRISM_API_KEY);
+    this.prismSignals = new PrismSignals(process.env.PRISM_API_KEY);
     this.ai = new AIStrategist({
       budget,
       news: this.news,
@@ -115,6 +124,9 @@ export class TradingEngine extends EventEmitter {
       // Background news refresh every 30 min (cached internally)
       this.newsCheckTimer = setInterval(() => { void this.news.get().catch(() => undefined); }, 30 * 60_000);
       void this.news.get().catch(() => undefined);
+      // Background Prism signals refresh + bus injection
+      this.prismRefreshTimer = setInterval(() => { void this.refreshPrismSignals().catch(() => undefined); }, this.prismRefreshMs);
+      void this.refreshPrismSignals().catch(() => undefined);
     });
   }
 
@@ -124,7 +136,44 @@ export class TradingEngine extends EventEmitter {
     this.timer = null;
     if (this.newsCheckTimer) clearInterval(this.newsCheckTimer);
     this.newsCheckTimer = null;
+    if (this.prismRefreshTimer) clearInterval(this.prismRefreshTimer);
+    this.prismRefreshTimer = null;
     this.persist();
+  }
+
+  /**
+   * Pull latest signals from Prism for our watchlist and republish them on
+   * the signal bus as `source: "prism"`. Throttled by Prism's free tier
+   * (1 QPS, 10 RPM) inside the PrismSignals class.
+   */
+  async refreshPrismSignals(force = false): Promise<{ entries: PrismSignalEntry[]; published: number }> {
+    if (!this.prismSignals.isConfigured()) return { entries: [], published: 0 };
+    if (this.prismInflight) return { entries: this.prismSignals.cached()?.entries ?? [], published: 0 };
+    this.prismInflight = true;
+    try {
+      const snap = await this.prismSignals.get(this.cfg.watchlist, force);
+      let published = 0;
+      for (const e of snap.entries) {
+        const { action, confidence } = prismToAction(e);
+        if (action === "HOLD") continue;
+        const reasons = e.activeSignals.length
+          ? e.activeSignals.map(s => `${s.type}:${s.signal}`).join(", ")
+          : `score ${e.netScore >= 0 ? "+" : ""}${e.netScore}`;
+        this.submitSignal({
+          source: "prism",
+          origin: "prismapi",
+          pair: e.pair,
+          action,
+          confidence,
+          reasoning: `Prism ${e.overall} (${e.strength}) — ${reasons}`,
+          ttlMs: this.prismSignalTtlMs,
+        });
+        published++;
+      }
+      return { entries: snap.entries, published };
+    } finally {
+      this.prismInflight = false;
+    }
   }
 
   private scheduleNext(): void {
@@ -163,6 +212,13 @@ export class TradingEngine extends EventEmitter {
         fetchedAt: this.news.cached()!.fetchedAt,
         articles: this.news.cached()!.articles.slice(0, 12),
         sentiment: this.news.cached()!.sentiment,
+      } : null,
+      prism: this.prismSignals.cached() ? {
+        fetchedAt: this.prismSignals.cached()!.fetchedAt,
+        cacheUntil: this.prismSignals.cached()!.cacheUntil,
+        entries: this.prismSignals.cached()!.entries,
+        errors: this.prismSignals.cached()!.errors,
+        degraded: this.prismSignals.cached()!.degraded,
       } : null,
       onchain: this.onchain.publicState(),
       lastAlert: this.lastAlert,
@@ -262,6 +318,13 @@ export class TradingEngine extends EventEmitter {
       fearGreedLabel: newsSnap?.sentiment.fearGreed?.label ?? null,
       trending: newsSnap?.sentiment.trending?.map(t => t.symbol) ?? [],
     };
+    // Include Prism's vendor signals so the AI can corroborate or argue against them.
+    const prismCached = this.prismSignals.cached();
+    const prism = prismCached ? prismCached.entries.map(e => ({
+      pair: e.pair, signal: e.overall, strength: e.strength,
+      net: e.netScore, rsi: e.indicators.rsi, macdHist: e.indicators.macdHistogram,
+      reasons: e.activeSignals.map(s => `${s.type}:${s.signal}`),
+    })) : [];
     return {
       ts: Date.now(),
       session: this.session,
@@ -282,6 +345,7 @@ export class TradingEngine extends EventEmitter {
       scanner: this.scannerView(),
       recentClosed,
       news,
+      prism,
     };
   }
 

@@ -49,23 +49,46 @@ export class OnchainCheckpointer {
   state: OnchainState;
   private wallet: ethers.Wallet | null = null;
   private provider: ethers.JsonRpcProvider | null = null;
+  private addressOnly: string | null = null;     // computed from key without RPC
 
   constructor(private rpcUrl?: string, private privateKey?: string) {
     this.state = readJson<OnchainState>(STATE_FILE, defaultState());
-    if (rpcUrl && privateKey) {
+    if (privateKey) {
       try {
-        this.provider = new ethers.JsonRpcProvider(rpcUrl);
-        this.wallet = new ethers.Wallet(privateKey, this.provider);
-        this.state.address = this.wallet.address;
-        void this.refreshBalance();
+        // Derive the address without instantiating a provider, so we can
+        // show identity info even if the RPC URL is bad/missing.
+        const w = new ethers.Wallet(privateKey);
+        this.addressOnly = w.address;
+        this.state.address = w.address;
       } catch (e) {
-        this.recordError("init: " + (e as Error).message);
+        this.recordError("invalid SEPOLIA_PRIVATE_KEY: " + (e as Error).message);
       }
     }
     this.persist();
   }
 
-  isConfigured(): boolean { return !!this.wallet; }
+  /** Lazy provider/wallet creation, used only when we actually need to talk to chain. */
+  private ensureProvider(): boolean {
+    if (this.wallet) return true;
+    if (!this.rpcUrl || !this.privateKey) return false;
+    try {
+      // Force a static network so ethers v6 never polls eth_chainId (which
+      // spams "failed to detect network" if the RPC URL is bad/unreachable).
+      const sepolia = ethers.Network.from({ name: "sepolia", chainId: 11155111 });
+      const provider = new ethers.JsonRpcProvider(this.rpcUrl, sepolia, { staticNetwork: sepolia });
+      // Disable background block polling — we only make explicit calls.
+      (provider as any).pollingInterval = 60_000_000;
+      this.provider = provider;
+      this.wallet = new ethers.Wallet(this.privateKey, provider);
+      return true;
+    } catch (e) {
+      this.recordError("provider init: " + (e as Error).message);
+      return false;
+    }
+  }
+
+  /** "configured" means we *could* operate on-chain — i.e., key + URL present. */
+  isConfigured(): boolean { return !!(this.privateKey && this.rpcUrl); }
 
   setEnabled(on: boolean): void {
     this.state.enabled = !!on;
@@ -87,7 +110,7 @@ export class OnchainCheckpointer {
   }
 
   async refreshBalance(): Promise<void> {
-    if (!this.wallet || !this.provider) return;
+    if (!this.ensureProvider() || !this.wallet || !this.provider) return;
     try {
       const wei = await this.provider.getBalance(this.wallet.address);
       this.state.balanceEth = Number(ethers.formatEther(wei));
@@ -98,7 +121,7 @@ export class OnchainCheckpointer {
   }
 
   shouldCheckpoint(): boolean {
-    if (!this.state.enabled || !this.wallet) return false;
+    if (!this.state.enabled || !this.isConfigured()) return false;
     return Date.now() - this.state.lastCheckpointAt >= this.state.intervalMs;
   }
 
@@ -108,7 +131,7 @@ export class OnchainCheckpointer {
    * with the digest as data, which any verifier can later check.
    */
   async writeCheckpoint(payload: { equity: number; trades: number; positions: number; extra?: any }): Promise<OnchainCheckpoint | null> {
-    if (!this.wallet || !this.provider) return null;
+    if (!this.ensureProvider() || !this.wallet || !this.provider) return null;
     const json = JSON.stringify(payload);
     const digest = ethers.id(json);
     try {
