@@ -14,7 +14,7 @@ import {
 } from "./types";
 import { fetchTickers, fetchOHLC, generateSyntheticTick, generateSyntheticCandles } from "./market-data";
 import { scoreMarket, buildTechnicalSignal } from "./strategy";
-import { SignalBus } from "./signal-bus";
+import { SignalBus, AggregatedDecision } from "./signal-bus";
 import { RiskManager } from "./risk-manager";
 import { PaperBroker } from "./paper-broker";
 import { Portfolio } from "./portfolio";
@@ -24,6 +24,9 @@ import { PrismSignals, prismToAction, PrismSignalEntry } from "./prism-signals";
 import { evaluateSession, SessionState } from "./time-filter";
 import { AIStrategist, StrategistBriefing, StrategistDecision, StrategistResult } from "./ai-strategist";
 import { OnchainCheckpointer } from "./onchain-checkpoint";
+import { FuturesEngine } from "./futures-engine";
+import { CapitalAllocator, computePerfStats } from "./allocator";
+import { routeSignal } from "./signal-router";
 import { appendJsonl, dataPath, statePath, readJson, writeJson } from "./persistence";
 
 const TRADES_FILE = dataPath("trades.jsonl");
@@ -48,6 +51,8 @@ export class TradingEngine extends EventEmitter {
   news: NewsFeed;
   prismSignals: PrismSignals;
   onchain: OnchainCheckpointer;
+  futures: FuturesEngine;
+  allocator: CapitalAllocator;
 
   private candles = new Map<string, PairCandle[]>();
   private ticks = new Map<string, Tick>();
@@ -111,6 +116,16 @@ export class TradingEngine extends EventEmitter {
       model: process.env.MISTRAL_MODEL || "mistral-large-latest",
     });
     this.onchain = new OnchainCheckpointer(process.env.SEPOLIA_RPC_URL, process.env.SEPOLIA_PRIVATE_KEY);
+
+    // Futures (perp desk) — Kraken Futures demo. Optional; engine still runs spot-only if keys missing.
+    this.futures = new FuturesEngine({
+      apiKey: process.env.KRAKEN_FUTURES_DEMO_KEY,
+      apiSecret: process.env.KRAKEN_FUTURES_DEMO_SECRET,
+      watchlist: this.cfg.watchlist,
+    });
+
+    // Capital allocator — logical split between spot & futures buckets.
+    this.allocator = new CapitalAllocator();
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -127,6 +142,10 @@ export class TradingEngine extends EventEmitter {
       // Background Prism signals refresh + bus injection
       this.prismRefreshTimer = setInterval(() => { void this.refreshPrismSignals().catch(() => undefined); }, this.prismRefreshMs);
       void this.refreshPrismSignals().catch(() => undefined);
+      // Futures engine + allocator
+      this.futures.start();
+      this.allocatorTimer = setInterval(() => this.tickAllocator(), this.allocatorTickMs);
+      this.tickAllocator();
     });
   }
 
@@ -138,7 +157,39 @@ export class TradingEngine extends EventEmitter {
     this.newsCheckTimer = null;
     if (this.prismRefreshTimer) clearInterval(this.prismRefreshTimer);
     this.prismRefreshTimer = null;
+    if (this.allocatorTimer) clearInterval(this.allocatorTimer);
+    this.allocatorTimer = null;
+    this.futures.stop();
     this.persist();
+  }
+
+  // ─── Allocator integration ─────────────────────────────────────────────────
+
+  private allocatorTimer: NodeJS.Timeout | null = null;
+  private allocatorTickMs = 5 * 60_000;     // every 5 min
+
+  private tickAllocator(): void {
+    try {
+      const spotEquity = this.portfolio.equity(this.ticks);
+      const futEquity = this.futures.portfolioValue || 0;
+      // Build perf curves from each side
+      const spotPerf = computePerfStats(
+        this.portfolio.equityCurve.map(p => ({ t: p.t, equity: p.equity })),
+        this.allocator.cfg.windowMs,
+      );
+      const futPerf = computePerfStats(
+        this.futures.equityCurve.map(p => ({ t: p.t, portfolioValue: p.portfolioValue })),
+        this.allocator.cfg.windowMs,
+      );
+      this.allocator.tick({
+        spotEquityUsd: spotEquity,
+        futuresEquityUsd: futEquity,
+        spotPerf,
+        futuresPerf: futPerf,
+      });
+    } catch (e) {
+      console.warn("[allocator] tick failed:", (e as Error).message);
+    }
   }
 
   /**
@@ -189,6 +240,8 @@ export class TradingEngine extends EventEmitter {
     const equity = this.portfolio.equity(this.ticks);
     const exposureUsd = this.portfolio.positionsValue(this.ticks);
     const riskState = this.risk.updateState({ equity, cash: this.portfolio.cash, exposureUsd });
+    const futState = this.futures.publicState();
+    const combinedEquity = equity + (futState.portfolioValue || 0);
     return {
       runningSince: this.startedAt,
       lastTickAt: this.lastTickAt,
@@ -223,6 +276,10 @@ export class TradingEngine extends EventEmitter {
       onchain: this.onchain.publicState(),
       lastAlert: this.lastAlert,
       lastDecision: this.lastDecision,
+      // ── Bucketed view ─────────────────────────────────────────────────
+      combinedEquity,
+      futures: futState,
+      allocator: this.allocator.publicState(),
     };
   }
 
@@ -574,17 +631,47 @@ export class TradingEngine extends EventEmitter {
 
   private async evaluatePair(pair: string): Promise<void> {
     if (this.risk.state.killSwitch || this.risk.state.paused) return;
-    if (this.portfolio.open.some(p => p.pair === pair)) return; // managed elsewhere
     if (!this.session.allowEntries) return;                     // time-of-day filter
     const decision = this.bus.aggregate(pair);
     if (decision.action === "HOLD") return;
     const tk = this.ticks.get(pair);
     if (!tk) return;
+
+    // Cross-bucket exposure check
+    const spotHas = this.portfolio.open.some(p => p.pair === pair);
+    const futHas = this.futures.positionViews.some(p => p.pair === pair);
+
+    // Build router input
+    const sources = decision.contributing
+      .sort((a, b) => (b.weight ?? 1) * b.confidence - (a.weight ?? 1) * a.confidence)
+      .map(s => s.source);
+    const routed = routeSignal({
+      pair,
+      action: decision.action,
+      confidence: decision.confidence,
+      sources,
+      topReason: decision.reasoning,
+      allocator: this.allocator.state,
+      futuresAvailable: this.futures.isConfigured() && this.futures.enabled && !this.futures.paused && !this.futures.killSwitch,
+      futuresHasPosition: futHas,
+      spotHasPosition: spotHas,
+      maxLeverageHardCap: this.futures.cfg.maxLeverage,
+      defaultLeverage: this.futures.cfg.defaultLeverage,
+    });
+
+    if (routed.bucket === "skip") return;
+
+    if (routed.bucket === "futures") {
+      void this.routeToFutures(pair, decision, routed.leverage ?? this.futures.cfg.defaultLeverage, routed.notionalShareHint, routed.reason);
+      return;
+    }
+
+    // Default: spot
+    if (spotHas) return; // managed elsewhere
     const cs = this.candles.get(pair);
     const atr = cs ? scoreMarket(cs).indicators.atr : null;
     const exposureByPair = this.portfolio.exposureByPair(this.ticks);
-    // Apply session sizing multiplier by adjusting confidence (which feeds risk budget)
-    const sessionAdjConf = Math.max(0.1, Math.min(1, decision.confidence * (this.session.sizingMultiplier ?? 1)));
+    const sessionAdjConf = Math.max(0.1, Math.min(1, decision.confidence * (this.session.sizingMultiplier ?? 1) * routed.notionalShareHint));
     const sizing = this.risk.evaluateEntry({
       side: decision.action,
       pair,
@@ -599,8 +686,33 @@ export class TradingEngine extends EventEmitter {
     });
     if (!sizing.ok || !sizing.qty || !sizing.notionalUsd) return;
     this.openPosition(decision.action, pair, tk, sizing.qty!, sizing.stopPrice!, sizing.takeProfit!,
-      `${decision.reasoning} | session ${this.session.session}`,
+      `${decision.reasoning} | session ${this.session.session} | router: ${routed.reason}`,
       decision.contributing[0]?.source ?? "technical");
+  }
+
+  /**
+   * Open a futures position via the futures engine. Sizes by combined-equity
+   * share weighted by allocator's futures target and the router's hint.
+   */
+  private async routeToFutures(pair: string, decision: AggregatedDecision, leverage: number, hint: number, routerReason: string): Promise<void> {
+    const futEq = this.futures.portfolioValue;
+    if (futEq <= 0) return;
+    // Target notional = futures equity × per-trade pct cap × hint × confidence factor.
+    // We use the futures engine's own per-trade pct cap as the upper bound.
+    const baseNotional = (futEq * this.futures.cfg.maxNotionalPerTradePctOfEquity) / 100;
+    const sessionMult = this.session.sizingMultiplier ?? 1;
+    const adjConf = Math.max(0.1, Math.min(1, decision.confidence * sessionMult));
+    const targetNotional = baseNotional * hint * adjConf;
+    const r = await this.futures.openPosition({
+      pair,
+      side: decision.action as "BUY" | "SELL",
+      notionalUsd: targetNotional,
+      leverage,
+      reasoning: `${decision.reasoning} | session ${this.session.session} | router: ${routerReason}`,
+    });
+    if (!r.ok) {
+      console.warn(`[engine] futures open ${pair} skipped: ${r.reason}`);
+    }
   }
 
   private openPosition(side: Action, pair: string, tick: Tick, qty: number, stop: number, tp: number, reasoning: string, source: any) {

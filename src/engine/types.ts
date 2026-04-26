@@ -1,6 +1,9 @@
 export type Side = "BUY" | "SELL";
 export type Action = Side | "HOLD";
 
+/** Which trading desk a signal/position belongs to. */
+export type Bucket = "spot" | "futures";
+
 export interface Tick {
   pair: string;
   price: number;
@@ -120,6 +123,50 @@ export interface ScannerRow {
   score: number;
   action: Action;
   updatedAt: number;
+}
+
+export interface FuturesPositionView {
+  symbol: string;            // e.g. PF_XBTUSD
+  pair: string;              // mapped spot pair, e.g. XBTUSD
+  side: "long" | "short";
+  size: number;              // contract qty
+  entryPrice: number;
+  markPrice: number;
+  notionalUsd: number;       // size * markPrice (linear approx)
+  leverage: number | null;   // effective leverage from exchange, may be null
+  unrealizedPnlUsd: number;
+  unrealizedPnlPct: number;  // % of notional
+  liquidationPrice: number | null;
+  liqDistancePct: number | null;
+  unrealizedFundingUsd: number;
+  fundingRate: number | null;       // current per-period funding rate
+  openedAt: number;
+}
+
+export interface FuturesEquityPoint {
+  t: number;
+  portfolioValue: number;    // USD-equiv from flex account
+  marginEquity: number;
+  availableMargin: number;
+  initialMargin: number;
+  unrealizedPnl: number;
+}
+
+export interface AllocatorState {
+  enabled: boolean;
+  spotTargetPct: number;        // 0..100
+  futuresTargetPct: number;     // 0..100
+  spotEquityUsd: number;        // observed
+  futuresEquityUsd: number;     // observed
+  combinedEquityUsd: number;
+  spotActualPct: number;
+  futuresActualPct: number;
+  leverageBias: number;         // -1..+1, AI macro tilt
+  lastRebalanceAt: number;
+  nextRebalanceAt: number;
+  frozenUntil: number;          // 0 if not frozen
+  reason: string;               // explanation for current state
+  history: { t: number; spotPct: number; futuresPct: number; tilt: number; reason: string }[];
 }
 
 export interface EngineConfig {

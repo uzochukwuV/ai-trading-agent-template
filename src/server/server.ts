@@ -251,6 +251,110 @@ app.post("/api/prism/refresh", requireApiKey, async (_req, res) => {
   }
 });
 
+// ─── Futures (Perp Desk) ─────────────────────────────────────────────────────
+
+app.get("/api/futures/snapshot", (_req, res) => {
+  res.json(engine.futures.publicState());
+});
+
+app.get("/api/futures/positions", (_req, res) => {
+  res.json(engine.futures.positionViews);
+});
+
+app.get("/api/futures/trades", (req, res) => {
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50));
+  res.json(engine.futures.recentTrades(limit));
+});
+
+app.get("/api/futures/equity", (_req, res) => {
+  res.json(engine.futures.equityCurve);
+});
+
+app.post("/api/futures/control/pause", requireApiKey, (req, res) => {
+  engine.futures.pause(String(req.body?.reason || "Paused via API"));
+  res.json({ ok: true, paused: true });
+});
+
+app.post("/api/futures/control/resume", requireApiKey, (_req, res) => {
+  engine.futures.resume();
+  res.json({ ok: true, paused: false });
+});
+
+app.post("/api/futures/control/enable", requireApiKey, (req, res) => {
+  engine.futures.setEnabled(req.body?.enabled !== false);
+  res.json({ ok: true, enabled: engine.futures.enabled });
+});
+
+app.post("/api/futures/control/reset-kill", requireApiKey, (_req, res) => {
+  engine.futures.resetKillSwitch();
+  res.json({ ok: true });
+});
+
+app.post("/api/futures/control/flatten", requireApiKey, async (_req, res) => {
+  const r = await engine.futures.closeAll("Flatten via API");
+  res.json({ ok: true, ...r });
+});
+
+app.post("/api/futures/control/poll", requireApiKey, async (_req, res) => {
+  try { await engine.futures.poll(); res.json({ ok: true, snapshot: engine.futures.publicState() }); }
+  catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
+app.post("/api/futures/order", requireApiKey, async (req, res) => {
+  const pair = String(req.body?.pair || "").toUpperCase();
+  const side = String(req.body?.side || "").toUpperCase();
+  const notionalUsd = Number(req.body?.notionalUsd);
+  const leverage = Number(req.body?.leverage) || undefined;
+  const reasoning = String(req.body?.reasoning || "manual order");
+  if (!pair || !["BUY", "SELL"].includes(side) || !(notionalUsd > 0)) {
+    res.status(400).json({ error: "pair, side (BUY|SELL) and positive notionalUsd are required" });
+    return;
+  }
+  const r = await engine.futures.openPosition({
+    pair, side: side as "BUY" | "SELL", notionalUsd, leverage, reasoning,
+  });
+  if (!r.ok) { res.status(400).json({ error: r.reason }); return; }
+  res.json(r);
+});
+
+app.post("/api/futures/close", requireApiKey, async (req, res) => {
+  const symbol = String(req.body?.symbol || "");
+  const reason = String(req.body?.reason || "manual close");
+  if (!symbol) { res.status(400).json({ error: "symbol required" }); return; }
+  const r = await engine.futures.closePosition(symbol, reason);
+  if (!r.ok) { res.status(400).json({ error: r.reason }); return; }
+  res.json({ ok: true });
+});
+
+// ─── Capital Allocator ───────────────────────────────────────────────────────
+
+app.get("/api/allocator", (_req, res) => {
+  res.json(engine.allocator.publicState());
+});
+
+app.post("/api/allocator/manual", requireApiKey, (req, res) => {
+  const spotPct = Number(req.body?.spotPct);
+  const futuresPct = Number(req.body?.futuresPct);
+  if (!Number.isFinite(spotPct) || !Number.isFinite(futuresPct) || spotPct < 0 || futuresPct < 0) {
+    res.status(400).json({ error: "spotPct and futuresPct required (>=0)" });
+    return;
+  }
+  engine.allocator.manualOverride(spotPct, futuresPct, String(req.body?.reason || "manual override via API"));
+  res.json({ ok: true, state: engine.allocator.publicState() });
+});
+
+app.post("/api/allocator/enable", requireApiKey, (req, res) => {
+  engine.allocator.setEnabled(req.body?.enabled !== false);
+  res.json({ ok: true, state: engine.allocator.publicState() });
+});
+
+app.post("/api/allocator/tilt", requireApiKey, (req, res) => {
+  const bias = Number(req.body?.bias);
+  if (!Number.isFinite(bias)) { res.status(400).json({ error: "bias (number) required" }); return; }
+  engine.allocator.setLeverageBias(bias);
+  res.json({ ok: true, state: engine.allocator.publicState() });
+});
+
 // ─── On-chain checkpointing (ERC-8004 style) ─────────────────────────────────
 
 app.get("/api/onchain", (_req, res) => {

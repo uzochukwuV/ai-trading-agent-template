@@ -1,5 +1,5 @@
 // Trading Agent Dashboard — client logic
-const state = { apiKey: null, cfg: null, watchlist: [] };
+const state = { apiKey: null, cfg: null, watchlist: [], activeTab: "spot", futCfg: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -137,6 +137,254 @@ function renderSnapshot(snap) {
   state.watchlist = snap.cfg?.watchlist || [];
   populatePairSelect();
   syncCfgInputs(snap.cfg);
+
+  // Combined bar (always visible across tabs)
+  renderCombinedBar(snap);
+}
+
+// ── Combined header (spot + perp) ──────────────────────────────────────────
+
+function renderCombinedBar(snap) {
+  const spotEq = snap.equity ?? 0;
+  const futEq = snap.futures?.portfolioValue ?? 0;
+  const combined = snap.combinedEquity ?? (spotEq + futEq);
+  const dayPnlSpot = snap.risk?.dailyPnl ?? 0;
+  const dayPnlFut = snap.futures?.dailyPnl ?? 0;
+  const totalDay = dayPnlSpot + dayPnlFut;
+
+  $("ck-combined").textContent = fmtUsd(combined);
+  $("ck-combined-sub").textContent = `spot ${fmtUsd(spotEq)} · perp ${fmtUsd(futEq)}`;
+
+  $("ck-day").textContent = fmtUsd(totalDay);
+  $("ck-day").className = "ckpi-value " + cssDir(totalDay);
+  $("ck-day-sub").textContent = `spot ${fmtUsd(dayPnlSpot)} · perp ${fmtUsd(dayPnlFut)}`;
+
+  const a = snap.allocator;
+  if (a) {
+    $("ck-alloc-target").textContent = `${a.spotTargetPct.toFixed(0)} / ${a.futuresTargetPct.toFixed(0)}`;
+    $("ck-alloc-actual").textContent = `actual ${a.spotActualPct.toFixed(0)} / ${a.futuresActualPct.toFixed(0)}`;
+    $("ck-tilt").textContent = (a.leverageBias > 0 ? "+" : "") + a.leverageBias.toFixed(2);
+    $("ck-tilt").className = "ckpi-value " + (a.leverageBias > 0.1 ? "up" : a.leverageBias < -0.1 ? "down" : "");
+    const nextIn = Math.max(0, a.nextRebalanceAt - Date.now());
+    $("ck-rebalance").textContent = a.frozenUntil > Date.now()
+      ? `frozen ${fmtCountdown(a.frozenUntil)}`
+      : `next rebal ${fmtCountdown(a.nextRebalanceAt)}`;
+    $("alloc-bar-spot").style.width = a.spotTargetPct + "%";
+    $("alloc-bar-fut").style.width  = a.futuresTargetPct + "%";
+    $("alloc-reason").textContent = a.reason || "—";
+
+    // Mirror to allocator panel inside futures tab
+    $("alloc-spot-target").textContent = a.spotTargetPct.toFixed(0) + "%";
+    $("alloc-fut-target").textContent  = a.futuresTargetPct.toFixed(0) + "%";
+    $("alloc-last").textContent = a.lastRebalanceAt ? fmtTime(a.lastRebalanceAt) : "never";
+    $("alloc-next").textContent = a.nextRebalanceAt ? fmtTime(a.nextRebalanceAt) : "—";
+    $("alloc-frozen").textContent = a.frozenUntil > Date.now() ? `until ${fmtTime(a.frozenUntil)}` : "no";
+    $("alloc-sub").textContent = `${a.history?.length || 0} rebalances · ${a.enabled ? "enabled" : "disabled"}`;
+    if (document.activeElement?.id !== "alloc-spot-input") $("alloc-spot-input").value = a.spotTargetPct.toFixed(0);
+    if (document.activeElement?.id !== "alloc-fut-input")  $("alloc-fut-input").value  = a.futuresTargetPct.toFixed(0);
+  }
+}
+
+// ── Futures rendering ──────────────────────────────────────────────────────
+
+function renderFutures(snap) {
+  const f = snap.futures;
+  if (!f) return;
+  state.futCfg = f.cfg;
+
+  // Sub line + status
+  const lev = f.cfg?.maxLeverage || 0;
+  const dlev = f.cfg?.defaultLeverage || 0;
+  $("fut-sub").textContent = f.configured
+    ? (f.lastPollAt ? `last poll ${fmtTime(f.lastPollAt)}` : "warming up...")
+    : "not configured (set KRAKEN_FUTURES_DEMO_KEY/SECRET)";
+
+  // KPIs
+  $("fut-kpi-equity").textContent = fmtUsd(f.portfolioValue);
+  $("fut-kpi-avail").textContent  = fmtUsd(f.availableMargin);
+  $("fut-kpi-avail-sub").textContent = `init margin ${fmtUsd(f.initialMargin)}`;
+  $("fut-kpi-upnl").textContent = fmtUsd(f.unrealizedPnl);
+  $("fut-kpi-upnl").className   = "kpi-value " + cssDir(f.unrealizedPnl);
+  $("fut-kpi-upnl-sub").textContent = (f.positions?.length || 0) + " positions";
+  $("fut-kpi-day").textContent  = fmtUsd(f.dailyPnl);
+  $("fut-kpi-day").className    = "kpi-value " + cssDir(f.dailyPnl);
+  $("fut-kpi-day-sub").textContent = fmtPct(f.dailyPnlPct);
+  $("fut-kpi-day-sub").className   = "kpi-foot " + cssDir(f.dailyPnl);
+  $("fut-kpi-lev").textContent  = lev ? lev + "x" : "—";
+  $("fut-kpi-lev-sub").textContent = `default ${dlev}x · cap ${lev}x`;
+
+  let status = "ARMED", statusCls = "up";
+  if (!f.configured) { status = "OFFLINE"; statusCls = ""; }
+  else if (f.killSwitch) { status = "KILL SWITCH"; statusCls = "down"; }
+  else if (f.paused)     { status = "PAUSED"; statusCls = "down"; }
+  else if (!f.enabled)   { status = "DISABLED"; statusCls = ""; }
+  $("fut-kpi-status").textContent = status;
+  $("fut-kpi-status").className = "kpi-value " + statusCls;
+  $("fut-kpi-status-sub").textContent = f.killReason || f.pauseReason || f.lastError || "ok";
+
+  // Positions
+  const pos = f.positions || [];
+  $("fut-pos-sub").textContent = `${pos.length} open · uPnL ${fmtUsd(f.unrealizedPnl)}`;
+  const pbody = $("fut-pos-body");
+  if (!pos.length) {
+    pbody.innerHTML = '<tr><td colspan="11" class="empty-row">no open perp positions</td></tr>';
+  } else {
+    pbody.innerHTML = pos.map(p => {
+      const liqDist = p.liqDistancePct;
+      const liqCls = liqDist == null ? "" : liqDist < 5 ? "liq-near" : liqDist < 15 ? "liq-mid" : "liq-far";
+      return `
+      <tr>
+        <td><strong>${p.symbol}</strong></td>
+        <td class="tag-${p.side === 'long' ? 'buy' : 'sell'}">${p.side.toUpperCase()}</td>
+        <td class="r">${fmtNum(p.size, 4)}</td>
+        <td class="r">${fmtUsd(p.notionalUsd)}</td>
+        <td class="r">${fmtUsd(p.entryPrice, 2)}</td>
+        <td class="r">${fmtUsd(p.markPrice, 2)}</td>
+        <td class="r"><span class="lev-pill">${p.leverage ? p.leverage.toFixed(1) + "x" : "—"}</span></td>
+        <td class="r ${liqCls}">${p.liquidationPrice ? fmtUsd(p.liquidationPrice, 2) : "—"}<br><small>${liqDist != null ? liqDist.toFixed(1) + "% away" : ""}</small></td>
+        <td class="r ${cssDir(p.unrealizedPnlUsd)}">${fmtUsd(p.unrealizedPnlUsd)}<br><small>${fmtPct(p.unrealizedPnlPct)}</small></td>
+        <td class="r ${cssDir(-p.unrealizedFundingUsd)}">${fmtUsd(p.unrealizedFundingUsd)}<br><small>${p.fundingRate != null ? (p.fundingRate * 100).toFixed(4) + "%" : "—"}</small></td>
+        <td class="r"><button class="fut-close-btn" data-close="${p.symbol}">CLOSE</button></td>
+      </tr>`;
+    }).join("");
+    // Wire close buttons
+    pbody.querySelectorAll("[data-close]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm(`Close ${btn.dataset.close} at market?`)) return;
+        btn.disabled = true; btn.textContent = "…";
+        try {
+          const r = await authedApi("/api/futures/close", { symbol: btn.dataset.close, reason: "manual close from dashboard" });
+          if (!r.ok) alert(r.error || "close failed");
+        } catch (e) { alert("close error: " + e.message); }
+        finally { refreshAll(); }
+      });
+    });
+  }
+
+  // Funding ticker — derived from positions for now (one fundingRate per perp held).
+  const fund = $("fut-funding");
+  if (!pos.length) {
+    fund.innerHTML = '<div class="empty">no open perps — funding ticker shows held perps only</div>';
+  } else {
+    fund.innerHTML = pos.map(p => {
+      const r8 = p.fundingRate;
+      const color = r8 == null ? "" : r8 > 0 ? "down" : "up"; // positive funding = longs pay
+      return `
+        <div class="prism-cell ${r8 == null ? 'prism-n' : (r8 > 0 ? 'prism-be' : 'prism-b')}">
+          <div class="prism-row1">
+            <span class="prism-pair">${p.symbol}</span>
+            <span class="prism-px">${fmtUsd(p.markPrice, 2)}</span>
+          </div>
+          <div class="prism-row2">
+            <span class="prism-overall">${p.side.toUpperCase()}</span>
+            <span class="prism-net ${color}">${r8 != null ? (r8 * 100).toFixed(4) + "%/8h" : "—"}</span>
+          </div>
+          <div class="prism-reasons">unreal funding: ${fmtUsd(p.unrealizedFundingUsd)}</div>
+        </div>`;
+    }).join("");
+  }
+  $("fut-fund-sub").textContent = pos.length ? `${pos.length} active perps` : "no active perps";
+
+  // Pair select for manual order — use mapped spot pairs (engine maps to PF_*)
+  populateFutPairSelect();
+}
+
+function populateFutPairSelect() {
+  const sel = $("fut-pair");
+  if (sel.options.length === state.watchlist.length || !state.watchlist.length) return;
+  const cur = sel.value;
+  sel.innerHTML = state.watchlist.map(p => `<option value="${p}">${p}</option>`).join("");
+  if (cur) sel.value = cur;
+}
+
+function renderFuturesTrades(trades) {
+  $("fut-trades-sub").textContent = trades.length + " recent";
+  const body = $("fut-trades-body");
+  if (!trades.length) { body.innerHTML = '<tr><td colspan="9" class="empty-row">no closed perp trades yet</td></tr>'; return; }
+  body.innerHTML = trades.map(t => `
+    <tr>
+      <td>${t.pair}</td>
+      <td class="tag-${t.side === 'BUY' ? 'buy' : 'sell'}">${t.side}</td>
+      <td class="r">${fmtUsd(t.entryPrice, 2)}</td>
+      <td class="r">${fmtUsd(t.exitPrice, 2)}</td>
+      <td class="r">${fmtNum(t.qty, 4)}</td>
+      <td class="r ${cssDir(t.pnlUsd)}">${fmtUsd(t.pnlUsd)}</td>
+      <td class="r ${cssDir(t.pnlUsd)}">${fmtPct(t.pnlPct)}</td>
+      <td title="${t.reasonClose || ''}">${t.reasonClose || '—'}</td>
+      <td class="r">${fmtDur((t.closedAt || 0) - (t.openedAt || 0))}</td>
+    </tr>`).join("");
+}
+
+let futChartCache = [];
+function drawFuturesEquity(points) {
+  const canvas = $("chart-fut-equity");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(1,0,0,1,0,0); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  $("fut-equity-sub").textContent = points.length + " samples";
+  if (points.length < 2) {
+    ctx.fillStyle = "#8a93a3"; ctx.font = "11px JetBrains Mono"; ctx.textAlign = "center";
+    ctx.fillText("collecting perp equity samples...", W / 2, H / 2);
+    return;
+  }
+  const ys = points.map(p => p.portfolioValue);
+  let min = Math.min(...ys), max = Math.max(...ys);
+  const startEq = ys[0];
+  min = Math.min(min, startEq); max = Math.max(max, startEq);
+  const pad = (max - min) * 0.1 || max * 0.005;
+  min -= pad; max += pad;
+  const range = max - min || 1;
+  const padL = 56, padR = 12, padT = 12, padB = 24;
+  const x = i => padL + (i / (points.length - 1)) * (W - padL - padR);
+  const y = v => H - padB - ((v - min) / range) * (H - padT - padB);
+
+  ctx.strokeStyle = "#1a2029"; ctx.lineWidth = 1;
+  ctx.fillStyle = "#8a93a3"; ctx.font = "9px JetBrains Mono"; ctx.textAlign = "right";
+  for (let i = 0; i <= 4; i++) {
+    const v = min + (range * i / 4); const yy = y(v);
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+    ctx.fillText("$" + v.toFixed(0), padL - 6, yy + 3);
+  }
+  const startY = y(startEq);
+  ctx.strokeStyle = "#5a4318"; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(padL, startY); ctx.lineTo(W - padR, startY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const last = ys[ys.length - 1]; const isUp = last >= startEq;
+  const grad = ctx.createLinearGradient(0, padT, 0, H - padB);
+  grad.addColorStop(0, isUp ? "rgba(212,160,23,0.30)" : "rgba(255,93,93,0.25)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.beginPath(); ctx.moveTo(x(0), y(ys[0]));
+  for (let i = 1; i < ys.length; i++) ctx.lineTo(x(i), y(ys[i]));
+  ctx.lineTo(x(ys.length - 1), H - padB); ctx.lineTo(x(0), H - padB); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  ctx.beginPath(); ctx.moveTo(x(0), y(ys[0]));
+  for (let i = 1; i < ys.length; i++) ctx.lineTo(x(i), y(ys[i]));
+  ctx.strokeStyle = isUp ? "#d4a017" : "#ff5d5d"; ctx.lineWidth = 1.6; ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(x(ys.length - 1), y(ys[ys.length - 1]), 3, 0, Math.PI * 2);
+  ctx.fillStyle = isUp ? "#d4a017" : "#ff5d5d"; ctx.fill();
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+
+function switchTab(name) {
+  state.activeTab = name;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  $("tab-spot").classList.toggle("hidden", name !== "spot");
+  $("tab-futures").classList.toggle("hidden", name !== "futures");
+  $("tab-meta-spot").classList.toggle("hidden", name !== "spot");
+  $("tab-meta-futures").classList.toggle("hidden", name !== "futures");
+  document.body.classList.toggle("tab-futures", name === "futures");
+  document.body.classList.toggle("tab-spot", name === "spot");
+  if (name === "futures") drawFuturesEquity(futChartCache);
+  else drawEquity(chartCache);
 }
 
 // ── Scanner ────────────────────────────────────────────────────────────────
@@ -507,12 +755,14 @@ function renderOnchain(snap) {
 let chartCache = [];
 async function refreshAll() {
   try {
-    const [snap, scanner, trades, signals, eq] = await Promise.all([
+    const [snap, scanner, trades, signals, eq, futTrades, futEq] = await Promise.all([
       api("/api/snapshot"),
       api("/api/scanner"),
       api("/api/trades?limit=20"),
       api("/api/signals?limit=40"),
       api("/api/equity"),
+      api("/api/futures/trades?limit=20").catch(() => []),
+      api("/api/futures/equity").catch(() => []),
     ]);
     renderSnapshot(snap);
     renderScanner(scanner);
@@ -523,7 +773,12 @@ async function refreshAll() {
     renderPrism(snap);
     renderOnchain(snap);
     chartCache = eq;
-    drawEquity(eq);
+    if (state.activeTab === "spot") drawEquity(eq);
+    // Futures
+    renderFutures(snap);
+    renderFuturesTrades(Array.isArray(futTrades) ? futTrades : []);
+    futChartCache = Array.isArray(futEq) ? futEq : [];
+    if (state.activeTab === "futures") drawFuturesEquity(futChartCache);
   } catch (e) {
     $("mode-badge").textContent = "OFFLINE";
     $("mode-badge").className = "badge badge-killed";
@@ -531,7 +786,10 @@ async function refreshAll() {
   }
 }
 
-window.addEventListener("resize", () => drawEquity(chartCache));
+window.addEventListener("resize", () => {
+  if (state.activeTab === "spot") drawEquity(chartCache);
+  else drawFuturesEquity(futChartCache);
+});
 
 // ── Event wiring ───────────────────────────────────────────────────────────
 
@@ -678,6 +936,91 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Curl URL: use page origin
   $("curl-url").textContent = window.location.origin + "/api/signals";
+
+  // ── Tab switcher ─────────────────────────────────────────────────────────
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+  // Initial tab from ?tab=spot|futures
+  try {
+    const initialTab = new URLSearchParams(location.search).get("tab");
+    if (initialTab === "futures" || initialTab === "spot") switchTab(initialTab);
+  } catch (_) {}
+
+  // ── Futures controls ─────────────────────────────────────────────────────
+  $("fut-lev").addEventListener("input", e => $("fut-lev-val").textContent = e.target.value);
+
+  $("btn-fut-pause").addEventListener("click", async () => {
+    await authedApi("/api/futures/control/pause", { reason: "Paused via dashboard" });
+    refreshAll();
+  });
+  $("btn-fut-resume").addEventListener("click", async () => {
+    await authedApi("/api/futures/control/resume", {});
+    refreshAll();
+  });
+  $("btn-fut-flatten").addEventListener("click", async () => {
+    if (!confirm("Close ALL open perp positions at market on the demo account?")) return;
+    const r = await authedApi("/api/futures/control/flatten", {});
+    if (r.error) alert(r.error);
+    refreshAll();
+  });
+  $("btn-fut-poll").addEventListener("click", async () => {
+    const btn = $("btn-fut-poll"); const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "polling…";
+    try { await authedApi("/api/futures/control/poll", {}); }
+    catch (e) { alert("poll error: " + e.message); }
+    finally { btn.disabled = false; btn.textContent = orig; refreshAll(); }
+  });
+
+  // Manual perp order
+  $("fut-order-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = $("fut-order-status");
+    status.textContent = "submitting...";
+    status.className = "form-status";
+    try {
+      const r = await authedApi("/api/futures/order", {
+        pair: $("fut-pair").value,
+        side: $("fut-side").value,
+        notionalUsd: Number($("fut-notional").value),
+        leverage: Number($("fut-lev").value),
+        reasoning: $("fut-reason").value,
+      });
+      if (r.ok) {
+        status.textContent = `OK — opened ${r.symbol} (${r.side}) size ${(r.size || 0).toFixed(4)} @ ${(r.markPrice || 0).toFixed(2)}`;
+        status.className = "form-status ok";
+      } else {
+        status.textContent = r.error || "Error";
+        status.className = "form-status err";
+      }
+      refreshAll();
+    } catch (e) {
+      status.textContent = "Error: " + e.message; status.className = "form-status err";
+    }
+  });
+
+  // Allocator manual override
+  $("alloc-manual-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = $("alloc-status");
+    const sp = Number($("alloc-spot-input").value);
+    const fp = Number($("alloc-fut-input").value);
+    if (Math.abs(sp + fp - 100) > 0.5) {
+      status.textContent = `Spot + Perp must sum to 100 (got ${sp + fp})`;
+      status.className = "form-status err"; return;
+    }
+    status.textContent = "applying…"; status.className = "form-status";
+    try {
+      const r = await authedApi("/api/allocator/manual", {
+        spotPct: sp, futuresPct: fp, reason: "manual override from dashboard",
+      });
+      if (r.ok) { status.textContent = `OK — ${sp}/${fp}`; status.className = "form-status ok"; }
+      else { status.textContent = r.error || "Error"; status.className = "form-status err"; }
+      refreshAll();
+    } catch (e) {
+      status.textContent = "Error: " + e.message; status.className = "form-status err";
+    }
+  });
 
   refreshAll();
   setInterval(refreshAll, 4000);

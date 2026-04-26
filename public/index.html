@@ -15,7 +15,7 @@
     <div class="dot"></div>
     <div class="brand-text">
       <div class="brand-name">AGENT TERMINAL</div>
-      <div class="brand-sub">v2 · self-contained paper engine</div>
+      <div class="brand-sub">v3 · dual-desk · spot + perp</div>
     </div>
   </div>
   <div class="topbar-right">
@@ -25,13 +25,54 @@
     <div class="control-group">
       <button class="btn btn-warn" id="btn-pause">Pause</button>
       <button class="btn btn-ok" id="btn-resume">Resume</button>
-      <button class="btn btn-danger" id="btn-flatten">Close all</button>
+      <button class="btn btn-danger" id="btn-flatten">Flatten all</button>
     </div>
   </div>
 </header>
 
-<!-- Hero KPI strip -->
-<section class="hero">
+<!-- Combined equity / allocator strip (always visible across tabs) -->
+<section class="combined-bar">
+  <div class="combined-kpis">
+    <div class="ckpi">
+      <span class="ckpi-label">Combined equity</span>
+      <span class="ckpi-value" id="ck-combined">$—</span>
+      <span class="ckpi-foot" id="ck-combined-sub">spot $— · perp $—</span>
+    </div>
+    <div class="ckpi">
+      <span class="ckpi-label">P&amp;L today</span>
+      <span class="ckpi-value" id="ck-day">$—</span>
+      <span class="ckpi-foot" id="ck-day-sub">spot — · perp —</span>
+    </div>
+    <div class="ckpi">
+      <span class="ckpi-label">Allocator target</span>
+      <span class="ckpi-value" id="ck-alloc-target">— / —</span>
+      <span class="ckpi-foot" id="ck-alloc-actual">actual — / —</span>
+    </div>
+    <div class="ckpi">
+      <span class="ckpi-label">AI tilt</span>
+      <span class="ckpi-value" id="ck-tilt">—</span>
+      <span class="ckpi-foot" id="ck-rebalance">next rebal —</span>
+    </div>
+  </div>
+  <div class="alloc-bar-wrap" title="Spot vs Perp allocation">
+    <div class="alloc-bar">
+      <div class="alloc-bar-spot" id="alloc-bar-spot"></div>
+      <div class="alloc-bar-fut" id="alloc-bar-fut"></div>
+    </div>
+    <div class="alloc-bar-foot" id="alloc-reason">—</div>
+  </div>
+</section>
+
+<!-- Tab switcher -->
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="spot">SPOT DESK</button>
+  <button class="tab-btn" data-tab="futures">PERP DESK</button>
+  <span class="tabs-meta" id="tab-meta-spot">spot · paper · kraken public</span>
+  <span class="tabs-meta hidden" id="tab-meta-futures">perp · kraken futures DEMO</span>
+</nav>
+
+<!-- Hero KPI strip (spot only) -->
+<section class="hero spot-only">
   <div class="kpi">
     <div class="kpi-label">Equity</div>
     <div class="kpi-value" id="kpi-equity">$—</div>
@@ -74,8 +115,8 @@
   </div>
 </section>
 
-<!-- Risk strip -->
-<section class="risk-strip">
+<!-- Risk strip (spot only) -->
+<section class="risk-strip spot-only">
   <div class="risk-block">
     <span class="risk-label">Kill switch</span>
     <span id="risk-kill" class="pill pill-ok">ARMED</span>
@@ -98,15 +139,15 @@
   </div>
 </section>
 
-<!-- AI alert banner -->
-<section id="ai-alert" class="ai-alert hidden">
+<!-- AI alert banner (spot only) -->
+<section id="ai-alert" class="ai-alert hidden spot-only">
   <span class="ai-alert-tag">AI ALERT</span>
   <span id="ai-alert-text"></span>
   <button class="btn-x" id="ai-alert-close">×</button>
 </section>
 
-<!-- Main grid -->
-<main class="grid">
+<!-- Main grid (SPOT DESK) -->
+<main id="tab-spot" class="grid">
 
   <!-- AI Strategist -->
   <section class="card span-2 card-ai">
@@ -400,6 +441,169 @@
         <li><strong>ttlMs</strong>: how long the signal stays live (max 1 hour)</li>
         <li>Signals are aggregated with technical + LLM signals before execution.</li>
       </ul>
+    </div>
+  </section>
+
+</main>
+
+<!-- Main grid (PERP DESK) — Kraken Futures DEMO -->
+<main id="tab-futures" class="grid hidden">
+
+  <!-- Futures KPI strip -->
+  <section class="card span-3">
+    <div class="card-head">
+      <h2>Perp desk — Kraken Futures DEMO</h2>
+      <span class="card-sub" id="fut-sub">—</span>
+      <div class="control-group" style="margin-left:auto">
+        <button class="btn btn-warn btn-sm" id="btn-fut-pause">Pause</button>
+        <button class="btn btn-ok btn-sm" id="btn-fut-resume">Resume</button>
+        <button class="btn btn-danger btn-sm" id="btn-fut-flatten">Flatten perps</button>
+        <button class="btn btn-ghost btn-sm" id="btn-fut-poll">Refresh</button>
+      </div>
+    </div>
+    <div class="hero hero-inner">
+      <div class="kpi">
+        <div class="kpi-label">Portfolio value</div>
+        <div class="kpi-value" id="fut-kpi-equity">$—</div>
+        <div class="kpi-foot">multi-collateral flex</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Available margin</div>
+        <div class="kpi-value" id="fut-kpi-avail">$—</div>
+        <div class="kpi-foot" id="fut-kpi-avail-sub">init margin $—</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Unreal P&amp;L</div>
+        <div class="kpi-value" id="fut-kpi-upnl">$—</div>
+        <div class="kpi-foot" id="fut-kpi-upnl-sub">— positions</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Today</div>
+        <div class="kpi-value" id="fut-kpi-day">$—</div>
+        <div class="kpi-foot" id="fut-kpi-day-sub">— %</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Max leverage</div>
+        <div class="kpi-value" id="fut-kpi-lev">—</div>
+        <div class="kpi-foot" id="fut-kpi-lev-sub">default —x · cap —x</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Status</div>
+        <div class="kpi-value" id="fut-kpi-status">—</div>
+        <div class="kpi-foot" id="fut-kpi-status-sub">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Futures equity chart -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>Perp equity curve</h2>
+      <span class="card-sub" id="fut-equity-sub">—</span>
+    </div>
+    <div class="chart-wrap"><canvas id="chart-fut-equity"></canvas></div>
+  </section>
+
+  <!-- Funding rates ticker -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Funding rates (8h)</h2>
+      <span class="card-sub" id="fut-fund-sub">—</span>
+    </div>
+    <div class="prism-grid" id="fut-funding">
+      <div class="empty">no ticker data yet</div>
+    </div>
+  </section>
+
+  <!-- Open futures positions -->
+  <section class="card span-3">
+    <div class="card-head">
+      <h2>Open perp positions</h2>
+      <span class="card-sub" id="fut-pos-sub">—</span>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Side</th><th class="r">Size</th><th class="r">Notional</th>
+            <th class="r">Entry</th><th class="r">Mark</th><th class="r">Lev</th>
+            <th class="r">Liq / dist</th><th class="r">Unreal P&amp;L</th><th class="r">Funding</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="fut-pos-body"><tr><td colspan="11" class="empty-row">no open perp positions</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Manual perp order -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Manual perp order</h2>
+      <span class="card-sub">market reduce-only safe</span>
+    </div>
+    <form id="fut-order-form" class="form">
+      <label>Pair
+        <select id="fut-pair"></select>
+      </label>
+      <label>Side
+        <select id="fut-side"><option>BUY</option><option>SELL</option></select>
+      </label>
+      <label>Notional USD
+        <input id="fut-notional" type="number" min="50" step="50" value="500" />
+      </label>
+      <label>Leverage <span id="fut-lev-val">3</span>x
+        <input id="fut-lev" type="range" min="1" max="5" step="1" value="3" />
+      </label>
+      <label>Reasoning
+        <input id="fut-reason" type="text" value="manual perp from dashboard" />
+      </label>
+      <button class="btn btn-primary" type="submit">Send market order</button>
+      <div class="form-status" id="fut-order-status"></div>
+    </form>
+  </section>
+
+  <!-- Allocator panel (perp side mirror) -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Capital allocator</h2>
+      <span class="card-sub" id="alloc-sub">—</span>
+    </div>
+    <div class="onchain">
+      <div class="oc-row"><span class="oc-label">Spot target</span><span class="ai-val" id="alloc-spot-target">—%</span></div>
+      <div class="oc-row"><span class="oc-label">Perp target</span><span class="ai-val" id="alloc-fut-target">—%</span></div>
+      <div class="oc-row"><span class="oc-label">Last rebalance</span><span id="alloc-last">—</span></div>
+      <div class="oc-row"><span class="oc-label">Next eligible</span><span id="alloc-next">—</span></div>
+      <div class="oc-row"><span class="oc-label">Frozen</span><span id="alloc-frozen">no</span></div>
+      <form id="alloc-manual-form" class="form" style="margin-top:8px">
+        <label>Manual spot %
+          <input id="alloc-spot-input" type="number" min="20" max="80" step="5" value="70" />
+        </label>
+        <label>Manual perp %
+          <input id="alloc-fut-input" type="number" min="20" max="80" step="5" value="30" />
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Apply override</button>
+        <div class="form-status" id="alloc-status"></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Recent perp trades -->
+  <section class="card span-3">
+    <div class="card-head">
+      <h2>Recent perp trades</h2>
+      <span class="card-sub" id="fut-trades-sub">—</span>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Side</th><th class="r">Entry</th><th class="r">Exit</th>
+            <th class="r">Size</th><th class="r">P&amp;L</th><th class="r">%</th>
+            <th>Reason</th><th class="r">Held</th>
+          </tr>
+        </thead>
+        <tbody id="fut-trades-body"><tr><td colspan="9" class="empty-row">no closed perp trades yet</td></tr></tbody>
+      </table>
     </div>
   </section>
 
