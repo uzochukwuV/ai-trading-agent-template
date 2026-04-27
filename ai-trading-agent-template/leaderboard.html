@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Trading Agents — ERC-8004 Leaderboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" type="application/javascript"></script>
+  <style>
+    :root {
+      --bg:        #0b0f19;
+      --surface:   #111827;
+      --surface2:  #1a2235;
+      --surface3:  #1f2a3d;
+      --border:    #1e2d47;
+      --border2:   #263650;
+      --cyan:      #22d3ee;
+      --cyan-dim:  #0e7490;
+      --cyan-glow: rgba(34,211,238,0.15);
+      --violet:    #a78bfa;
+      --green:     #4ade80;
+      --green-dim: #166534;
+      --amber:     #fbbf24;
+      --red:       #f87171;
+      --text:      #e2e8f0;
+      --text-2:    #94a3b8;
+      --text-3:    #475569;
+      --text-4:    #2d3f55;
+      --gold:      #f59e0b;
+      --silver:    #94a3b8;
+      --bronze:    #b45309;
+      --mono:      'DM Mono', monospace;
+      --sans:      'Syne', sans-serif;
+    }
+
+    /* ── Light mode overrides ───────────────────── */
+    [data-theme="light"] {
+      --bg:        #f0f4f8;
+      --surface:   #ffffff;
+      --surface2:  #e8edf3;
+      --surface3:  #dde3ec;
+      --border:    #cbd5e1;
+      --border2:   #b0bcd0;
+      --cyan:      #0369a1;
+      --cyan-dim:  #0284c7;
+      --cyan-glow: rgba(3,105,161,0.08);
+      --violet:    #6d28d9;
+      --green:     #15803d;
+      --green-dim: #166534;
+      --amber:     #b45309;
+      --red:       #dc2626;
+      --text:      #0f172a;
+      --text-2:    #1e3a5f;
+      --text-3:    #475569;
+      --text-4:    #94a3b8;
+      --gold:      #92400e;
+      --silver:    #475569;
+      --bronze:    #78350f;
+    }
+
+    [data-theme="light"] body::before {
+      background: radial-gradient(ellipse, rgba(3,105,161,0.05) 0%, transparent 70%);
+    }
+
+    [data-theme="light"] .skel {
+      background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+      background-size: 300% 100%;
+    }
+
+    /* ── Theme toggle button ────────────────────── */
+    .theme-toggle {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--text-2);
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+
+    .theme-toggle:hover {
+      border-color: var(--border2);
+      color: var(--text);
+    }
+
+    .theme-toggle-icon { font-size: 0.85rem; line-height: 1; }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      transition: background 0.25s, color 0.25s;
+    }
+
+    /* Subtle radial glow at top */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -200px; left: 50%;
+      transform: translateX(-50%);
+      width: 900px; height: 500px;
+      background: radial-gradient(ellipse, rgba(34,211,238,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── Header ────────────────────────────────── */
+    header {
+      padding: 32px 0 28px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-left { display: flex; flex-direction: column; gap: 10px; }
+
+    .header-tags {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tag-pill {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+
+    .tag-pill.lablab {
+      color: var(--cyan);
+      border-color: var(--cyan-dim);
+      background: rgba(34,211,238,0.06);
+    }
+
+    .tag-pill.network {
+      color: var(--text-2);
+      border-color: var(--border2);
+      background: var(--surface2);
+    }
+
+    h1 {
+      font-family: var(--sans);
+      font-size: clamp(1.4rem, 3.5vw, 2.1rem);
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+
+    h1 em {
+      font-style: normal;
+      color: var(--cyan);
+    }
+
+    .header-sub {
+      font-size: 0.75rem;
+      color: var(--text-3);
+      letter-spacing: 0.02em;
+    }
+
+    .header-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      padding-top: 4px;
+    }
+
+    .live-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(74,222,128,0.08);
+      border: 1px solid rgba(74,222,128,0.25);
+      border-radius: 999px;
+      padding: 5px 12px 5px 8px;
+      font-family: var(--sans);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--green);
+    }
+
+    .live-dot {
+      width: 7px; height: 7px;
+      background: var(--green);
+      border-radius: 50%;
+      box-shadow: 0 0 6px var(--green);
+      animation: blink 1.6s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .timer-row {
+      font-size: 0.68rem;
+      color: var(--text-3);
+      text-align: right;
+    }
+
+    .timer-row b { color: var(--text-2); font-weight: 500; }
+
+    /* ── Stat cards ─────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin: 24px 0;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.25s, transform 0.2s, background 0.25s;
+    }
+
+    .stat-card:hover {
+      border-color: var(--border2);
+      transform: translateY(-1px);
+    }
+
+    .stat-icon {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      display: block;
+      opacity: 0.7;
+    }
+
+    .stat-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-3);
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-family: var(--sans);
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--text);
+    }
+
+    .stat-card.cyan  .stat-value { color: var(--cyan); }
+    .stat-card.green .stat-value { color: var(--green); }
+    .stat-card.amber .stat-value { color: var(--amber); }
+
+    .stat-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 2px;
+      opacity: 0.5;
+    }
+
+    .stat-card.cyan::after  { background: linear-gradient(90deg, var(--cyan), transparent); }
+    .stat-card.green::after { background: linear-gradient(90deg, var(--green), transparent); }
+    .stat-card.amber::after { background: linear-gradient(90deg, var(--amber), transparent); }
+    .stat-card.violet::after { background: linear-gradient(90deg, var(--violet), transparent); }
+
+    /* ── Status bar ─────────────────────────────── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.73rem;
+      margin-bottom: 16px;
+      transition: opacity 0.3s;
+    }
+
+    .status-bar.error {
+      background: rgba(248,113,113,0.07);
+      border: 1px solid rgba(248,113,113,0.2);
+      color: var(--red);
+      display: flex;
+    }
+
+    .status-bar.hidden { display: none; }
+
+    .status-icon { font-size: 0.9rem; }
+
+    /* ── Table container ────────────────────────── */
+    .board {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: background 0.25s, border-color 0.25s;
+    }
+
+    .board-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+
+    .board-title {
+      font-family: var(--sans);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--text-2);
+    }
+
+    .board-meta {
+      font-size: 0.68rem;
+      color: var(--text-3);
+    }
+
+    .board-meta b { color: var(--cyan); font-weight: 500; }
+
+    /* ── Empty state ────────────────────────────── */
+    .empty-state {
+      display: none;
+      padding: 72px 24px;
+      text-align: center;
+    }
+
+    .empty-state.show { display: block; }
+
+    .empty-graphic {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 6px;
+      height: 64px;
+      margin-bottom: 28px;
+    }
+
+    .empty-bar {
+      width: 18px;
+      border-radius: 3px 3px 0 0;
+      background: var(--surface3);
+      border: 1px solid var(--border2);
+      opacity: 0.5;
+    }
+
+    .empty-state h3 {
+      font-family: var(--sans);
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text-2);
+      margin-bottom: 8px;
+    }
+
+    .empty-state p {
+      font-size: 0.75rem;
+      color: var(--text-3);
+      max-width: 380px;
+      margin: 0 auto;
+      line-height: 1.7;
+    }
+
+    .empty-steps {
+      display: flex;
+      justify-content: center;
+      gap: 0;
+      margin-top: 36px;
+      flex-wrap: wrap;
+    }
+
+    .empty-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 0 24px;
+      position: relative;
+    }
+
+    .empty-step:not(:last-child)::after {
+      content: '→';
+      position: absolute;
+      right: -4px;
+      top: 10px;
+      color: var(--text-4);
+      font-size: 0.9rem;
+    }
+
+    .step-num {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--surface3);
+      border: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--sans);
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--text-2);
+    }
+
+    .step-label {
+      font-size: 0.65rem;
+      color: var(--text-3);
+      text-align: center;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Skeleton ───────────────────────────────── */
+    .skeleton-row {
+      display: grid;
+      grid-template-columns: 52px 1fr 1fr 100px 80px 120px 120px;
+      gap: 0;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+    }
+
+    .skeleton-row:last-child { border-bottom: none; }
+
+    .skel {
+      height: 14px;
+      background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 50%, var(--surface2) 75%);
+      background-size: 300% 100%;
+      animation: shimmer 1.6s infinite;
+      border-radius: 4px;
+      margin-right: 24px;
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: 300% 0; }
+      100% { background-position: -300% 0; }
+    }
+
+    /* ── Table ──────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      padding: 11px 16px;
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      font-weight: 400;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-4);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    thead th.r { text-align: right; }
+    thead th.c { text-align: center; }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.12s;
+      cursor: default;
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+
+    tbody tr.rank-1 td:first-child { border-left: 2px solid var(--gold); }
+    tbody tr.rank-2 td:first-child { border-left: 2px solid var(--silver); }
+    tbody tr.rank-3 td:first-child { border-left: 2px solid var(--bronze); }
+
+    tbody tr.dim { opacity: 0.4; }
+
+    td {
+      padding: 14px 16px;
+      font-size: 0.78rem;
+      vertical-align: middle;
+    }
+
+    td.r { text-align: right; }
+    td.c { text-align: center; }
+
+    /* Rank */
+    .rank-num {
+      font-family: var(--sans);
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-3);
+    }
+
+    .rank-num.gold   { color: var(--gold); }
+    .rank-num.silver { color: var(--silver); }
+    .rank-num.bronze { color: var(--bronze); }
+
+    /* Agent cell */
+    .agent-name {
+      font-family: var(--sans);
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+
+    .agent-meta {
+      font-size: 0.65rem;
+      color: var(--text-3);
+    }
+
+    /* Capital */
+    .capital-claimed {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.68rem;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+
+    .capital-claimed.yes {
+      color: var(--green);
+      border-color: rgba(74,222,128,0.25);
+      background: rgba(74,222,128,0.06);
+    }
+
+    .capital-claimed.no {
+      color: var(--text-3);
+      border-color: var(--border);
+      background: transparent;
+    }
+
+    .eth-val {
+      font-size: 0.65rem;
+      color: var(--text-3);
+      margin-top: 3px;
+      text-align: center;
+    }
+
+    /* Trades */
+    .trades-num {
+      font-family: var(--sans);
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--text);
+    }
+
+    .trades-num.zero { color: var(--text-4); font-size: 0.8rem; }
+
+    /* Score */
+    .score-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .score-num {
+      font-family: var(--sans);
+      font-weight: 700;
+      font-size: 0.9rem;
+      min-width: 26px;
+      text-align: right;
+    }
+
+    .score-track {
+      width: 56px;
+      height: 4px;
+      background: var(--surface3);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .score-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.8s cubic-bezier(0.16,1,0.3,1);
+    }
+
+    .score-fill.c { background: var(--cyan); }
+    .score-fill.v { background: var(--violet); }
+
+    .score-empty { color: var(--text-4); font-size: 0.75rem; }
+
+    /* Date */
+    .date-str {
+      font-size: 0.68rem;
+      color: var(--text-3);
+    }
+
+    /* ── Footer ─────────────────────────────────── */
+    footer {
+      margin-top: 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      flex-wrap: wrap;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .footer-label {
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-4);
+      margin-bottom: 8px;
+    }
+
+    .contract-list { display: flex; flex-direction: column; gap: 4px; }
+
+    .contract-row {
+      font-size: 0.67rem;
+      color: var(--text-3);
+      display: flex;
+      gap: 8px;
+    }
+
+    .contract-row span { color: var(--text-3); min-width: 140px; }
+
+    .contract-row a {
+      color: var(--cyan-dim);
+      text-decoration: none;
+      font-family: var(--mono);
+    }
+
+    .contract-row a:hover { color: var(--cyan); }
+
+    .footer-right {
+      text-align: right;
+      font-size: 0.67rem;
+      color: var(--text-4);
+      line-height: 1.8;
+    }
+
+    /* ── Responsive ─────────────────────────────── */
+    @media (max-width: 900px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .hide-md { display: none; }
+    }
+
+    @media (max-width: 600px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .hide-sm { display: none; }
+      td, thead th { padding: 10px 10px; }
+      h1 { font-size: 1.3rem; }
+      .score-track { width: 36px; }
+    }
+
+    /* Fade-in */
+    .fade-in {
+      animation: fadein 0.3s ease both;
+    }
+
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header>
+    <div class="header-left">
+      <div class="header-tags">
+        <span class="tag-pill lablab">Lablab.ai Hackathon</span>
+        <span class="tag-pill network">Sepolia Testnet</span>
+      </div>
+      <h1>AI Trading Agents &mdash; <em>ERC-8004</em> Leaderboard</h1>
+      <div class="header-sub">Rankings update live from on-chain data &nbsp;·&nbsp; Sepolia Chain ID 11155111</div>
+    </div>
+    <div class="header-right">
+      <div class="live-pill">
+        <div class="live-dot"></div>
+        LIVE
+      </div>
+      <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode">
+        <span class="theme-toggle-icon" id="theme-icon">🌙</span>
+        <span id="theme-label">Dark</span>
+      </button>
+      <div class="timer-row">
+        Updated <b id="last-updated">just now</b>
+      </div>
+      <div class="timer-row">
+        Next refresh in <b id="countdown">30s</b>
+      </div>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card cyan">
+      <span class="stat-icon">⬡</span>
+      <div class="stat-label">Agents Registered</div>
+      <div class="stat-value" id="stat-agents">0</div>
+    </div>
+    <div class="stat-card green">
+      <span class="stat-icon">✦</span>
+      <div class="stat-label">Capital Claimed</div>
+      <div class="stat-value" id="stat-claimed">0</div>
+    </div>
+    <div class="stat-card amber">
+      <span class="stat-icon">◈</span>
+      <div class="stat-label">Active Traders</div>
+      <div class="stat-value" id="stat-active">0</div>
+    </div>
+    <div class="stat-card violet">
+      <span class="stat-icon">◇</span>
+      <div class="stat-label">Allocation / Team</div>
+      <div class="stat-value" style="color:var(--violet)" id="stat-alloc">… <span style="font-size:1rem;opacity:0.6">ETH</span></div>
+    </div>
+  </div>
+
+  <!-- Error banner -->
+  <div class="status-bar hidden" id="error-bar">
+    <span class="status-icon">⚠</span>
+    RPC connection issue — showing last known data. Retrying on next refresh.
+  </div>
+
+  <!-- Board -->
+  <div class="board">
+    <div class="board-header">
+      <div class="board-title">Live Rankings</div>
+      <div class="board-meta"><b id="showing-count">0</b> agents registered</div>
+    </div>
+
+    <!-- Skeleton -->
+    <div id="skeleton-wrap">
+      <div class="skeleton-row">
+        <div class="skel" style="width:20px;height:20px;border-radius:50%"></div>
+        <div class="skel" style="width:60%"></div>
+        <div class="skel" style="width:50%"></div>
+        <div class="skel" style="width:70%"></div>
+        <div class="skel" style="width:40%"></div>
+        <div class="skel" style="width:80%"></div>
+        <div class="skel" style="width:60%"></div>
+      </div>
+      <div class="skeleton-row">
+        <div class="skel" style="width:20px;height:20px;border-radius:50%"></div>
+        <div class="skel" style="width:50%"></div>
+        <div class="skel" style="width:40%"></div>
+        <div class="skel" style="width:65%"></div>
+        <div class="skel" style="width:30%"></div>
+        <div class="skel" style="width:70%"></div>
+        <div class="skel" style="width:55%"></div>
+      </div>
+      <div class="skeleton-row" style="border-bottom:none">
+        <div class="skel" style="width:20px;height:20px;border-radius:50%"></div>
+        <div class="skel" style="width:45%"></div>
+        <div class="skel" style="width:55%"></div>
+        <div class="skel" style="width:60%"></div>
+        <div class="skel" style="width:35%"></div>
+        <div class="skel" style="width:75%"></div>
+        <div class="skel" style="width:50%"></div>
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="empty-state">
+      <div class="empty-graphic">
+        <div class="empty-bar" style="height:28px"></div>
+        <div class="empty-bar" style="height:44px"></div>
+        <div class="empty-bar" style="height:36px"></div>
+        <div class="empty-bar" style="height:56px"></div>
+        <div class="empty-bar" style="height:32px"></div>
+        <div class="empty-bar" style="height:48px"></div>
+        <div class="empty-bar" style="height:24px"></div>
+      </div>
+      <h3>No agents registered yet</h3>
+      <p>Once teams register on the shared AgentRegistry contract, they will appear here ranked by validation score and reputation.</p>
+      <div class="empty-steps">
+        <div class="empty-step">
+          <div class="step-num">1</div>
+          <div class="step-label">Register agent<br>on AgentRegistry</div>
+        </div>
+        <div class="empty-step">
+          <div class="step-num">2</div>
+          <div class="step-label">Claim 0.05 ETH<br>from Vault</div>
+        </div>
+        <div class="empty-step">
+          <div class="step-num">3</div>
+          <div class="step-label">Submit trades<br>via RiskRouter</div>
+        </div>
+        <div class="empty-step">
+          <div class="step-num">4</div>
+          <div class="step-label">Post checkpoints<br>to Validation</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data table -->
+    <table id="data-table" style="display:none">
+      <thead>
+        <tr>
+          <th style="width:52px" class="c">#</th>
+          <th>Agent</th>
+          <th class="hide-sm">Operator</th>
+          <th class="c">Capital</th>
+          <th class="r">Trades</th>
+          <th class="r">Validation</th>
+          <th class="r hide-md">Reputation</th>
+          <th class="r hide-md">Registered</th>
+        </tr>
+      </thead>
+      <tbody id="data-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <div>
+      <div class="footer-label">On-chain contracts</div>
+      <div class="contract-list">
+        <div class="contract-row"><span>AgentRegistry</span> <a href="https://sepolia.etherscan.io/address/0x97b07dDc405B0c28B17559aFFE63BdB3632d0ca3#code" target="_blank">0x97b07d…0ca3 ↗</a></div>
+        <div class="contract-row"><span>HackathonVault</span> <a href="https://sepolia.etherscan.io/address/0x0E7CD8ef9743FEcf94f9103033a044caBD45fC90#code" target="_blank">0x0E7CD8…fC90 ↗</a></div>
+        <div class="contract-row"><span>RiskRouter</span> <a href="https://sepolia.etherscan.io/address/0xd6A6952545FF6E6E6681c2d15C59f9EB8F40FdBC#code" target="_blank">0xd6A695…FdBC ↗</a></div>
+        <div class="contract-row"><span>ValidationRegistry</span> <a href="https://sepolia.etherscan.io/address/0x92bF63E5C7Ac6980f237a7164Ab413BE226187F1#code" target="_blank">0x92bF63…87F1 ↗</a></div>
+        <div class="contract-row"><span>ReputationRegistry</span> <a href="https://sepolia.etherscan.io/address/0x423a9904e39537a9997fbaF0f220d79D7d545763#code" target="_blank">0x423a99…5763 ↗</a></div>
+      </div>
+    </div>
+    <div class="footer-right">
+      Ranked by validation score · tiebreak by reputation<br>
+      Reads live from Sepolia · auto-refreshes every 30s<br>
+      <span style="color:var(--text-4)">AI Trading Agents Hackathon · March 30 – April 12, 2026</span>
+    </div>
+  </footer>
+
+</div>
+<script>
+// ── Theme toggle ─────────────────────────────────────────────────────────────
+(function() {
+  const root    = document.documentElement;
+  const saved   = localStorage.getItem('lb-theme') || 'light';
+  root.setAttribute('data-theme', saved);
+
+  function applyTheme(t) {
+    root.setAttribute('data-theme', t);
+    localStorage.setItem('lb-theme', t);
+    const icon  = document.getElementById('theme-icon');
+    const label = document.getElementById('theme-label');
+    if (icon)  icon.textContent  = t === 'dark' ? '☀' : '🌙';
+    if (label) label.textContent = t === 'dark' ? 'Light' : 'Dark';
+  }
+
+  applyTheme(saved);
+
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('theme-toggle').addEventListener('click', function() {
+      const current = root.getAttribute('data-theme') || 'dark';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    });
+  });
+})();
+
+// ── Config ───────────────────────────────────────────────────────────────────
+const RPCS = [
+  "https://ethereum-sepolia-rpc.publicnode.com",
+  "https://sepolia.drpc.org",
+  "https://rpc2.sepolia.org",
+  "https://sepolia.gateway.tenderly.co",
+];
+
+const REFRESH_MS = 30000;
+
+const ADDR = {
+  registry:   "0x97b07dDc405B0c28B17559aFFE63BdB3632d0ca3",
+  vault:      "0x0E7CD8ef9743FEcf94f9103033a044caBD45fC90",
+  router:     "0xd6A6952545FF6E6E6681c2d15C59f9EB8F40FdBC",
+  validation: "0x92bF63E5C7Ac6980f237a7164Ab413BE226187F1",
+  reputation: "0x423a9904e39537a9997fbaF0f220d79D7d545763",
+};
+
+const ABI = {
+  registry:   [
+    "function totalAgents() view returns (uint256)",
+    "function getAgent(uint256) view returns (tuple(address operatorWallet, address agentWallet, string name, string description, string[] capabilities, uint256 registeredAt, bool active) agent)",
+  ],
+  vault:      [
+    "function hasClaimed(uint256) view returns (bool)",
+    "function getBalance(uint256) view returns (uint256)",
+    "function allocationPerTeam() view returns (uint256)",
+  ],
+  router:     ["function getIntentNonce(uint256) view returns (uint256)"],
+  validation: [
+    "function getAverageValidationScore(uint256) view returns (uint256)",
+    "function attestationCount(uint256) view returns (uint256)",
+  ],
+  reputation: ["function getAverageScore(uint256) view returns (uint256)"],
+};
+
+// ── DOM ──────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const el = {
+  lastUpdated:  $("last-updated"),
+  countdown:    $("countdown"),
+  statAgents:   $("stat-agents"),
+  statClaimed:  $("stat-claimed"),
+  statActive:   $("stat-active"),
+  statAlloc:    $("stat-alloc"),
+  showingCount: $("showing-count"),
+  skeletons:    $("skeleton-wrap"),
+  emptyState:   $("empty-state"),
+  dataTable:    $("data-table"),
+  dataBody:     $("data-body"),
+  errorBar:     $("error-bar"),
+};
+
+// ── State ────────────────────────────────────────────────────────────────────
+let lastFetchAt = null;
+let cdSecs      = 30;
+let cdTimer     = null;
+let loopTimer   = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const shortAddr = a => a.slice(0,6) + '…' + a.slice(-4);
+const fmtDate = ts => new Date(Number(ts)*1000).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+const ago = ts => { const s=Math.floor((Date.now()-ts)/1000); return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h'; };
+
+function rankClass(r) {
+  if (r===1) return 'rank-1';
+  if (r===2) return 'rank-2';
+  if (r===3) return 'rank-3';
+  return '';
+}
+
+function rankLabel(r) {
+  const cls = r===1?'gold':r===2?'silver':r===3?'bronze':'';
+  return `<span class="rank-num ${cls}">${r}</span>`;
+}
+
+function scoreCell(val, colorClass) {
+  if (!val || Number(val) === 0)
+    return `<span class="score-empty">—</span>`;
+  const pct = Math.min(100, Number(val));
+  return `
+    <div class="score-wrap">
+      <span class="score-num" style="color:var(--${colorClass==='c'?'cyan':'violet'})">${pct}</span>
+      <div class="score-track">
+        <div class="score-fill ${colorClass}" style="width:${pct}%"></div>
+      </div>
+    </div>`;
+}
+
+// ── Provider with fallback ───────────────────────────────────────────────────
+async function getProvider() {
+  for (const rpc of RPCS) {
+    try {
+      const p = new ethers.providers.JsonRpcProvider(rpc);
+      await p.getBlockNumber();
+      return p;
+    } catch (_) {}
+  }
+  throw new Error("All RPCs failed");
+}
+
+// ── Fetch ────────────────────────────────────────────────────────────────────
+async function fetchData() {
+  const provider = await getProvider();
+  const reg = new ethers.Contract(ADDR.registry,   ABI.registry,   provider);
+  const vlt = new ethers.Contract(ADDR.vault,      ABI.vault,      provider);
+  const rtr = new ethers.Contract(ADDR.router,     ABI.router,     provider);
+  const val = new ethers.Contract(ADDR.validation, ABI.validation, provider);
+  const rep = new ethers.Contract(ADDR.reputation, ABI.reputation, provider);
+
+  const [total, allocPerTeam] = await Promise.all([
+    reg.totalAgents().then(Number),
+    vlt.allocationPerTeam().catch(() => null),
+  ]);
+  if (allocPerTeam) {
+    el.statAlloc.innerHTML = parseFloat(ethers.utils.formatEther(allocPerTeam)).toFixed(3)
+      + ' <span style="font-size:1rem;opacity:0.6">ETH</span>';
+  }
+  if (total === 0) return [];
+
+  const rows = await Promise.all(
+    Array.from({length: total}, (_, i) => i).map(async id => {
+      const [agent, claimed, balance, trade, valScore, repScore] = await Promise.all([
+        reg.getAgent(id),
+        vlt.hasClaimed(id).catch(()=>false),
+        vlt.getBalance(id).catch(()=>ethers.BigNumber.from(0)),
+        rtr.getIntentNonce(id).catch(()=>ethers.BigNumber.from(0)),
+        val.getAverageValidationScore(id).catch(()=>ethers.BigNumber.from(0)),
+        rep.getAverageScore(id).catch(()=>ethers.BigNumber.from(0)),
+      ]);
+      return {
+        id,
+        name:        agent[2] || `Agent #${id}`,
+        operator:    agent[0],
+        registeredAt:agent[5],
+        active:      agent[6],
+        claimed,
+        balance:     parseFloat(ethers.utils.formatEther(balance)).toFixed(4),
+        trades:      Number(trade || 0),
+        valScore:    Number(valScore),
+        repScore:    Number(repScore),
+      };
+    })
+  );
+
+  return rows.sort((a,b) => b.valScore !== a.valScore ? b.valScore - a.valScore : b.repScore - a.repScore);
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function render(rows) {
+  el.statAgents.textContent  = rows.length;
+  el.statClaimed.textContent = rows.filter(r=>r.claimed).length;
+  el.statActive.textContent  = rows.filter(r=>r.trades>0).length;
+  el.showingCount.textContent = rows.length;
+
+  el.skeletons.style.display = 'none';
+
+  if (rows.length === 0) {
+    el.dataTable.style.display = 'none';
+    el.emptyState.classList.add('show');
+    return;
+  }
+
+  el.emptyState.classList.remove('show');
+  el.dataTable.style.display = 'table';
+
+  el.dataBody.innerHTML = rows.map((r, i) => {
+    const rank = i + 1;
+    const dim  = r.claimed && r.trades === 0;
+
+    return `
+      <tr class="${rankClass(rank)} ${dim?'dim':''} fade-in" style="animation-delay:${i*0.04}s">
+        <td class="c">${rankLabel(rank)}</td>
+        <td>
+          <div class="agent-name">${esc(r.name)}</div>
+          <div class="agent-meta">ID #${r.id}</div>
+        </td>
+        <td class="hide-sm">
+          <div class="agent-meta">${shortAddr(r.operator)}</div>
+        </td>
+        <td class="c">
+          <div>
+            <span class="capital-claimed ${r.claimed?'yes':'no'}">
+              ${r.claimed ? '✓ Claimed' : '○ Pending'}
+            </span>
+          </div>
+          ${r.claimed ? `<div class="eth-val">${r.balance} ETH</div>` : ''}
+        </td>
+        <td class="r">
+          <span class="trades-num ${r.trades===0?'zero':''}">${r.trades||'—'}</span>
+        </td>
+        <td class="r">${scoreCell(r.valScore, 'c')}</td>
+        <td class="r hide-md">${scoreCell(r.repScore, 'v')}</td>
+        <td class="r hide-md"><span class="date-str">${fmtDate(r.registeredAt)}</span></td>
+      </tr>`;
+  }).join('');
+}
+
+// ── Countdown ────────────────────────────────────────────────────────────────
+function startCountdown() {
+  clearInterval(cdTimer);
+  cdSecs = REFRESH_MS / 1000;
+  cdTimer = setInterval(() => {
+    cdSecs = Math.max(0, cdSecs - 1);
+    el.countdown.textContent = cdSecs + 's';
+    if (lastFetchAt) el.lastUpdated.textContent = ago(lastFetchAt);
+  }, 1000);
+}
+
+// ── Refresh loop ─────────────────────────────────────────────────────────────
+async function refresh() {
+  clearTimeout(loopTimer);
+  try {
+    const rows = await fetchData();
+    render(rows);
+    el.errorBar.classList.add('hidden');
+    el.errorBar.classList.remove('error');
+    lastFetchAt = Date.now();
+    el.lastUpdated.textContent = 'just now';
+  } catch (e) {
+    console.error(e);
+    el.skeletons.style.display = 'none';
+    el.errorBar.className = 'status-bar error';
+  }
+  startCountdown();
+  loopTimer = setTimeout(refresh, REFRESH_MS);
+}
+
+refresh();
+</script>
+</body>
+</html>
