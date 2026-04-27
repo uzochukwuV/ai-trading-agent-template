@@ -143,7 +143,11 @@ export class FuturesEngine extends EventEmitter {
     }
     this.running = true;
     this.startedAt = Date.now();
-    void this.poll().finally(() => this.scheduleNext());
+    void this.poll().catch(e => {
+      this.lastError = { ts: Date.now(), where: "poll", msg: (e as Error).message };
+      this.emit("futuresError", this.lastError);
+      console.warn(`[futures] initial poll failed: ${(e as Error).message} — will retry`);
+    }).finally(() => this.scheduleNext());
   }
 
   stop(): void {
@@ -158,7 +162,7 @@ export class FuturesEngine extends EventEmitter {
     this.timer = setTimeout(() => {
       this.poll().catch(e => {
         this.lastError = { ts: Date.now(), where: "poll", msg: (e as Error).message };
-        this.emit("error", this.lastError);
+        this.emit("futuresError", this.lastError);
       }).finally(() => this.scheduleNext());
     }, this.cfg.pollMs);
   }

@@ -386,6 +386,55 @@ app.post("/api/onchain/checkpoint", requireApiKey, async (_req, res) => {
   res.json({ ok: true, checkpoint: cp });
 });
 
+// ─── ERC-8004 RiskRouter + ValidationRegistry ────────────────────────────────
+
+app.get("/api/erc8004", (_req, res) => {
+  res.json(engine.erc8004.publicState());
+});
+
+app.post("/api/erc8004/refresh", requireApiKey, async (_req, res) => {
+  try {
+    const state = await engine.refreshErc8004();
+    res.json({ ok: true, state });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/erc8004/gate-mode", requireApiKey, (req, res) => {
+  const mode = String(req.body?.mode || "").toLowerCase();
+  if (!["off", "simulate", "submit"].includes(mode)) {
+    res.status(400).json({ error: "mode must be 'off', 'simulate', or 'submit'" });
+    return;
+  }
+  engine.setErc8004GateMode(mode as "off" | "simulate" | "submit");
+  res.json({ ok: true, state: engine.erc8004.publicState() });
+});
+
+app.post("/api/erc8004/attest-mode", requireApiKey, (req, res) => {
+  const mode = String(req.body?.mode || "").toLowerCase();
+  if (!["off", "on"].includes(mode)) {
+    res.status(400).json({ error: "mode must be 'off' or 'on'" });
+    return;
+  }
+  engine.setErc8004AttestMode(mode as "off" | "on");
+  res.json({ ok: true, state: engine.erc8004.publicState() });
+});
+
+app.post("/api/erc8004/probe", requireApiKey, async (req, res) => {
+  const pair = String(req.body?.pair || "XBTUSD");
+  const side = String(req.body?.side || "BUY").toUpperCase();
+  const amountUsd = Number(req.body?.amountUsd || 25);
+  if (!["BUY", "SELL"].includes(side)) { res.status(400).json({ error: "side must be BUY or SELL" }); return; }
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) { res.status(400).json({ error: "amountUsd must be > 0" }); return; }
+  try {
+    const r = await engine.erc8004Probe(pair, side as "BUY" | "SELL", amountUsd);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 // ─── Static dashboard ────────────────────────────────────────────────────────
 
 app.use(express.static(PUBLIC_DIR));

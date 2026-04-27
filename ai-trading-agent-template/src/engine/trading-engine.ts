@@ -24,6 +24,8 @@ import { PrismSignals, prismToAction, PrismSignalEntry } from "./prism-signals";
 import { evaluateSession, SessionState } from "./time-filter";
 import { AIStrategist, StrategistBriefing, StrategistDecision, StrategistResult } from "./ai-strategist";
 import { OnchainCheckpointer } from "./onchain-checkpoint";
+import { ERC8004OnchainEngine } from "./erc8004-onchain";
+import { appendJsonl as appendCheckpointJsonl } from "./persistence";
 import { FuturesEngine } from "./futures-engine";
 import { CapitalAllocator, computePerfStats } from "./allocator";
 import { routeSignal } from "./signal-router";
@@ -51,6 +53,7 @@ export class TradingEngine extends EventEmitter {
   news: NewsFeed;
   prismSignals: PrismSignals;
   onchain: OnchainCheckpointer;
+  erc8004: ERC8004OnchainEngine;
   futures: FuturesEngine;
   allocator: CapitalAllocator;
 
@@ -116,6 +119,17 @@ export class TradingEngine extends EventEmitter {
       model: process.env.MISTRAL_MODEL || "mistral-large-latest",
     });
     this.onchain = new OnchainCheckpointer(process.env.SEPOLIA_RPC_URL, process.env.SEPOLIA_PRIVATE_KEY);
+    this.erc8004 = new ERC8004OnchainEngine({
+      rpcUrl: process.env.SEPOLIA_RPC_URL,
+      privateKey: process.env.SEPOLIA_PRIVATE_KEY,
+      agentId: process.env.AGENT_ID,
+      agentRegistry: process.env.AGENT_REGISTRY_ADDRESS,
+      riskRouter: process.env.RISK_ROUTER_ADDRESS,
+      validationRegistry: process.env.VALIDATION_REGISTRY_ADDRESS,
+      reputationRegistry: process.env.REPUTATION_REGISTRY_ADDRESS,
+      vault: process.env.HACKATHON_VAULT_ADDRESS,
+    });
+    this.erc8004.start();
 
     // Futures (perp desk) — Kraken Futures demo. Optional; engine still runs spot-only if keys missing.
     this.futures = new FuturesEngine({
@@ -274,6 +288,7 @@ export class TradingEngine extends EventEmitter {
         degraded: this.prismSignals.cached()!.degraded,
       } : null,
       onchain: this.onchain.publicState(),
+      erc8004: this.erc8004.publicState(),
       lastAlert: this.lastAlert,
       lastDecision: this.lastDecision,
       // ── Bucketed view ─────────────────────────────────────────────────
@@ -476,6 +491,28 @@ export class TradingEngine extends EventEmitter {
       positions: this.portfolio.open.length,
       extra: { ts: Date.now() },
     });
+  }
+
+  // ─── ERC-8004 controls (RiskRouter + ValidationRegistry) ─────────────────
+
+  setErc8004GateMode(mode: "off" | "simulate" | "submit") { this.erc8004.setGateMode(mode); }
+  setErc8004AttestMode(mode: "off" | "on") { this.erc8004.setAttestMode(mode); }
+  async refreshErc8004() { await this.erc8004.refreshAll(); return this.erc8004.publicState(); }
+  /** Trigger a manual gate+attest pass against the on-chain stack for the
+   *  given pair, useful for verifying the wiring without waiting for a real
+   *  trading signal. */
+  async erc8004Probe(pair: string, side: "BUY" | "SELL", amountUsd: number) {
+    const tk = this.ticks.get(pair);
+    if (!tk) return { error: `no tick for ${pair}` };
+    const gate = await this.erc8004.gateTrade({ pair, side, amountUsd });
+    const att = await this.erc8004.attestTrade({
+      pair, side, asset: pair,
+      amountUsd, priceUsd: side === "BUY" ? tk.ask : tk.bid,
+      reasoning: `manual probe (${side} $${amountUsd})`,
+      confidence: 0.5, intentHash: gate.intentHash,
+      notes: `PROBE ${side} ${pair} $${amountUsd}`,
+    });
+    return { gate, attestation: att?.attestation, checkpointHash: (att?.checkpoint as any)?.checkpointHash };
   }
 
   closeAll(reason = "manual flatten"): number {
@@ -685,9 +722,25 @@ export class TradingEngine extends EventEmitter {
       cooldownUntil: this.cooldownUntil,
     });
     if (!sizing.ok || !sizing.qty || !sizing.notionalUsd) return;
+
+    // ── On-chain RiskRouter gate (ERC-8004) ───────────────────────────────
+    // Builds + signs a TradeIntent and either simulates (view, no gas) or
+    // submits (state-changing tx) to the on-chain RiskRouter. If gateMode is
+    // "off" or the client isn't configured, this returns approved=true.
+    const gate = await this.erc8004.gateTrade({
+      pair,
+      side: decision.action as "BUY" | "SELL",
+      amountUsd: sizing.notionalUsd!,
+    }).catch(e => ({ approved: true, reason: `gate err: ${(e as Error).message}`, mode: "off" as const }));
+    if (!gate.approved) {
+      console.warn(`[engine] on-chain gate REJECTED ${decision.action} ${pair} $${sizing.notionalUsd!.toFixed(2)} — ${gate.reason}`);
+      return;
+    }
+
     this.openPosition(decision.action, pair, tk, sizing.qty!, sizing.stopPrice!, sizing.takeProfit!,
       `${decision.reasoning} | session ${this.session.session} | router: ${routed.reason}`,
-      decision.contributing[0]?.source ?? "technical");
+      decision.contributing[0]?.source ?? "technical",
+      (gate as { intentHash?: string }).intentHash);
   }
 
   /**
@@ -715,7 +768,7 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
-  private openPosition(side: Action, pair: string, tick: Tick, qty: number, stop: number, tp: number, reasoning: string, source: any) {
+  private openPosition(side: Action, pair: string, tick: Tick, qty: number, stop: number, tp: number, reasoning: string, source: any, intentHash?: string) {
     if (side === "HOLD") return;
     const { position, fillPrice, feeUsd } = this.broker.open({
       side: side as "BUY" | "SELL",
@@ -727,6 +780,17 @@ export class TradingEngine extends EventEmitter {
     this.portfolio.applyOpen(position, fillNotional, feeUsd);
     appendJsonl(TRADES_FILE, { kind: "open", at: position.openedAt, pos: position, fillPrice, feeUsd });
     this.emit("trade", { kind: "open", pair });
+
+    // ── On-chain checkpoint attestation (ERC-8004 / ValidationRegistry) ──
+    void this.erc8004.attestTrade({
+      pair, side: side as "BUY" | "SELL", asset: pair,
+      amountUsd: fillNotional, priceUsd: fillPrice,
+      reasoning, confidence: 0.7,
+      intentHash,
+      notes: `OPEN ${side} ${pair} qty=${qty.toFixed(6)} @ ${fillPrice.toFixed(4)}`,
+    }).then(r => {
+      if (r?.checkpoint) appendCheckpointJsonl(dataPath("checkpoints.jsonl"), { kind: "open", ...r.checkpoint });
+    }).catch(e => console.warn("[engine] attestTrade(open) err:", (e as Error).message));
   }
 
   private managePosition(pos: Position, tk: Tick): void {
@@ -761,6 +825,19 @@ export class TradingEngine extends EventEmitter {
     this.cooldownUntil.set(pos.pair, Date.now() + this.cfg.cooldownMs);
     appendJsonl(TRADES_FILE, { kind: "close", at: closed.closedAt, closed, fillPrice, feeUsd });
     this.emit("trade", { kind: "close", pair: pos.pair });
+
+    // ── Close-side checkpoint attestation. Score scales with realized PnL%. ──
+    const pnlPct = closed.pnlPct ?? 0;
+    const score = Math.max(1, Math.min(100, Math.round(50 + pnlPct * 5))); // 0% PnL = 50; +10% = 100; -10% = 1
+    void this.erc8004.attestTrade({
+      pair: pos.pair, side: pos.side === "BUY" ? "SELL" : "BUY", asset: pos.pair,
+      amountUsd: fillNotional, priceUsd: fillPrice,
+      reasoning: reason, confidence: 0.7,
+      score,
+      notes: `CLOSE ${pos.side} ${pos.pair} pnl=$${(closed.pnlUsd ?? 0).toFixed(2)} (${pnlPct.toFixed(2)}%) — ${reason}`,
+    }).then(r => {
+      if (r?.checkpoint) appendCheckpointJsonl(dataPath("checkpoints.jsonl"), { kind: "close", ...r.checkpoint });
+    }).catch(e => console.warn("[engine] attestTrade(close) err:", (e as Error).message));
   }
 
   // ─── Persistence ───────────────────────────────────────────────────────────

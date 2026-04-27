@@ -750,6 +750,89 @@ function renderOnchain(snap) {
     : '<div class="empty">no checkpoints yet</div>';
 }
 
+// ── ERC-8004 (RiskRouter + ValidationRegistry + Vault + Reputation) ────────
+
+function shortAddr(a) { return a ? `${a.slice(0,6)}…${a.slice(-4)}` : "—"; }
+function shortHash(h) { return h ? `${h.slice(0,10)}…${h.slice(-6)}` : "—"; }
+function explorerTx(h) { return `https://sepolia.etherscan.io/tx/${h}`; }
+function explorerAddr(a) { return `https://sepolia.etherscan.io/address/${a}`; }
+
+function renderErc8004(snap) {
+  const e = snap.erc8004;
+  if (!e) return;
+  if (!e.configured) {
+    $("erc-sub").textContent = "not configured";
+    $("erc-agent-status").textContent = "NOT CONFIGURED";
+    $("erc-agent-status").className = "ai-val pill pill-warn";
+    return;
+  }
+
+  $("erc-sub").textContent = `gate ${e.gateMode} · attest ${e.attestMode}`;
+  $("erc-agent").textContent = e.agentId ? `#${e.agentId}${e.agentDid ? " — " + e.agentDid : ""}` : "—";
+  $("erc-agent-status").textContent = e.agentRegistered ? "REGISTERED" : "UNREGISTERED";
+  $("erc-agent-status").className = "ai-val pill " + (e.agentRegistered ? "pill-ok" : "pill-warn");
+
+  const addr = e.walletAddress;
+  const w = $("erc-wallet-link");
+  w.textContent = shortAddr(addr);
+  w.href = addr ? explorerAddr(addr) : "#";
+  $("erc-wallet-balance").textContent = e.walletBalanceEth != null ? Number(e.walletBalanceEth).toFixed(5) + " ETH" : "—";
+
+  $("erc-vault-alloc").textContent = e.vaultAllocatedEth != null ? Number(e.vaultAllocatedEth).toFixed(5) + " ETH" : "—";
+  $("erc-vault-total").textContent = e.vaultTotalEth != null
+    ? `${Number(e.vaultTotalEth).toFixed(5)} / ${Number(e.vaultUnallocatedEth ?? 0).toFixed(5)} ETH`
+    : "—";
+
+  const r = e.reputation || {};
+  $("erc-reputation").textContent = r.feedbackCount != null
+    ? `avg ${r.averageScore ?? "—"} (${r.feedbackCount} ratings)` : "—";
+
+  const val = e.validation || {};
+  $("erc-validation").textContent = val.attestationCount != null
+    ? `avg ${val.averageValidationScore ?? "—"} (${val.attestationCount} attestations)` : "—";
+
+  const rp = e.riskParams;
+  $("erc-risk").textContent = rp
+    ? `max trade $${rp.maxTradeUsd}, daily $${rp.maxDailyVolumeUsd}, concurrent ${rp.maxConcurrent}`
+    : "not set on chain (RiskRouter accepts default policy)";
+
+  const tr = e.tradeRecord;
+  $("erc-window").textContent = tr
+    ? `${tr.count} trades on chain` + (tr.windowStart ? ` · window since ${fmtTime(Number(tr.windowStart) * 1000)}` : "")
+    : "—";
+
+  $("erc-nonce").textContent = e.intentNonce != null ? `#${e.intentNonce}` : "—";
+
+  if (document.activeElement?.id !== "erc-gate-mode") $("erc-gate-mode").value = e.gateMode || "simulate";
+  if (document.activeElement?.id !== "erc-attest-mode") $("erc-attest-mode").value = e.attestMode || "off";
+
+  const intents = e.intents || [];
+  $("erc-intents-sub").textContent = `${intents.length} recent`;
+  $("erc-intents").innerHTML = intents.length
+    ? intents.slice(-6).reverse().map(i => `
+        <div class="oc-item">
+          <span class="oc-time">${fmtTime(i.ts)}</span>
+          <span class="oc-eq">${i.side} ${i.pair} $${Number(i.amountUsd).toFixed(0)} → ${i.decision || (i.approved ? "APPROVED" : "REJECTED")}</span>
+          ${i.txHash
+            ? `<a href="${explorerTx(i.txHash)}" target="_blank" rel="noopener" class="oc-tx">${shortHash(i.txHash)}</a>`
+            : `<span class="oc-tx">${shortHash(i.intentHash)}</span>`}
+        </div>`).join("")
+    : '<div class="empty">no intents yet</div>';
+
+  const atts = e.attestations || [];
+  $("erc-att-sub").textContent = `${atts.length} recent`;
+  $("erc-attestations").innerHTML = atts.length
+    ? atts.slice(-6).reverse().map(a => `
+        <div class="oc-item">
+          <span class="oc-time">${fmtTime(a.ts)}</span>
+          <span class="oc-eq">score ${a.score ?? "—"} · ${a.pair || "trade"}</span>
+          ${a.txHash
+            ? `<a href="${explorerTx(a.txHash)}" target="_blank" rel="noopener" class="oc-tx">${shortHash(a.txHash)}</a>`
+            : `<span class="oc-tx">${shortHash(a.checkpointHash)}</span>`}
+        </div>`).join("")
+    : '<div class="empty">no attestations yet</div>';
+}
+
 // ── Live update loop ───────────────────────────────────────────────────────
 
 let chartCache = [];
@@ -772,6 +855,7 @@ async function refreshAll() {
     renderNews(snap);
     renderPrism(snap);
     renderOnchain(snap);
+    renderErc8004(snap);
     chartCache = eq;
     if (state.activeTab === "spot") drawEquity(eq);
     // Futures
@@ -916,6 +1000,42 @@ document.addEventListener("DOMContentLoaded", () => {
     const r = await authedApi("/api/onchain/interval", { intervalMs: Number(e.target.value) });
     if (!r.ok) alert(r.error || "failed");
     refreshAll();
+  });
+
+  // ERC-8004 controls
+  $("btn-erc-refresh").addEventListener("click", async () => {
+    const btn = $("btn-erc-refresh"); const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "refreshing…";
+    try {
+      const r = await authedApi("/api/erc8004/refresh", {});
+      if (!r.ok) alert("ERC-8004: " + (r.error || "failed"));
+    } catch (e) { alert("error: " + e.message); }
+    finally { btn.disabled = false; btn.textContent = orig; refreshAll(); }
+  });
+  $("erc-gate-mode").addEventListener("change", async (e) => {
+    const r = await authedApi("/api/erc8004/gate-mode", { mode: e.target.value });
+    if (!r.ok) alert(r.error || "failed");
+    refreshAll();
+  });
+  $("erc-attest-mode").addEventListener("change", async (e) => {
+    const r = await authedApi("/api/erc8004/attest-mode", { mode: e.target.value });
+    if (!r.ok) alert(r.error || "failed");
+    refreshAll();
+  });
+  $("btn-erc-probe").addEventListener("click", async () => {
+    const status = $("erc-probe-status");
+    const btn = $("btn-erc-probe"); const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "probing…";
+    status.textContent = "sending probe…";
+    try {
+      const r = await authedApi("/api/erc8004/probe", { pair: "XBTUSD", side: "BUY", amountUsd: 25 });
+      if (!r.ok) { status.textContent = "error: " + (r.error || "failed"); return; }
+      const g = r.gate || {};
+      status.innerHTML = `gate: <strong>${g.decision}</strong>${g.reason ? " — " + g.reason : ""}`
+        + (g.intentHash ? `<br><span class="oc-mono">intent ${shortHash(g.intentHash)}</span>` : "")
+        + (r.checkpointHash ? `<br><span class="oc-mono">checkpoint ${shortHash(r.checkpointHash)}</span>` : "");
+    } catch (e) { status.textContent = "error: " + e.message; }
+    finally { btn.disabled = false; btn.textContent = orig; refreshAll(); }
   });
 
   // API key reveal/copy

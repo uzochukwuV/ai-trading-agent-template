@@ -382,10 +382,67 @@
     </form>
   </section>
 
-  <!-- On-chain checkpointing -->
+  <!-- ERC-8004 on-chain integration (Sepolia) -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>ERC-8004 on-chain (Sepolia)</h2>
+      <span class="card-sub" id="erc-sub">—</span>
+    </div>
+    <div class="onchain">
+      <div class="oc-row"><span class="oc-label">Agent</span>
+        <span id="erc-agent" class="oc-mono">—</span>
+        <span id="erc-agent-status" class="ai-val pill pill-warn">—</span>
+      </div>
+      <div class="oc-row"><span class="oc-label">Wallet</span>
+        <a id="erc-wallet-link" href="#" target="_blank" rel="noopener" class="oc-mono">—</a>
+        <span id="erc-wallet-balance" class="ai-val">—</span>
+      </div>
+      <div class="oc-row"><span class="oc-label">Vault allocated</span><span id="erc-vault-alloc" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Vault total / unalloc.</span><span id="erc-vault-total" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Reputation</span><span id="erc-reputation" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Validation score</span><span id="erc-validation" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Risk params</span><span id="erc-risk" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Trade window</span><span id="erc-window" class="ai-val">—</span></div>
+      <div class="oc-row"><span class="oc-label">Next nonce</span><span id="erc-nonce" class="ai-val">—</span></div>
+
+      <div class="oc-row" style="margin-top:8px"><span class="oc-label">Pre-trade gate</span>
+        <select id="erc-gate-mode">
+          <option value="off">off — no on-chain check</option>
+          <option value="simulate" selected>simulate — view, no gas</option>
+          <option value="submit">submit — sends a Sepolia tx</option>
+        </select>
+      </div>
+      <div class="oc-row"><span class="oc-label">Attest checkpoints</span>
+        <select id="erc-attest-mode">
+          <option value="off" selected>off — local only</option>
+          <option value="on">on — post EIP-712 to ValidationRegistry</option>
+        </select>
+      </div>
+
+      <div class="oc-controls">
+        <button class="btn btn-ghost btn-sm" id="btn-erc-refresh">Refresh state</button>
+        <button class="btn btn-primary btn-sm" id="btn-erc-probe">Probe gate (BUY $25 XBTUSD)</button>
+      </div>
+      <div class="form-status" id="erc-probe-status"></div>
+
+      <div class="oc-section-head" style="margin-top:12px">
+        <strong>Recent on-chain intents</strong>
+        <span class="card-sub" id="erc-intents-sub">—</span>
+      </div>
+      <div class="oc-list" id="erc-intents"><div class="empty">no intents yet</div></div>
+
+      <div class="oc-section-head" style="margin-top:8px">
+        <strong>Recent attestations</strong>
+        <span class="card-sub" id="erc-att-sub">—</span>
+      </div>
+      <div class="oc-list" id="erc-attestations"><div class="empty">no attestations yet</div></div>
+    </div>
+  </section>
+
+  <!-- legacy on-chain anchor card (digest self-tx) -->
   <section class="card">
     <div class="card-head">
-      <h2>On-chain identity (Sepolia)</h2>
+      <h2>Legacy digest anchor</h2>
       <span class="card-sub" id="onchain-sub">—</span>
     </div>
     <div class="onchain">
