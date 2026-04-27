@@ -187,7 +187,39 @@ function renderCombinedBar(snap) {
 
 // ── Futures rendering ──────────────────────────────────────────────────────
 
+function renderFuturesErc(snap) {
+  const e = snap.erc8004;
+  if (!e || !e.configured) {
+    if ($("fut-erc-sub")) $("fut-erc-sub").textContent = "not configured";
+    return;
+  }
+  $("fut-erc-sub").textContent = `gate ${e.gateMode} · attest ${e.attestMode}`;
+  $("fut-erc-id").textContent = e.agentId ? `#${e.agentId}` : "#—";
+  $("fut-erc-id-sub").textContent = e.agentRegistered
+    ? (e.agentDid || "registered")
+    : "unregistered";
+  $("fut-erc-alloc").textContent = e.vaultAllocatedEth != null
+    ? Number(e.vaultAllocatedEth).toFixed(4) + " ETH" : "— ETH";
+  $("fut-erc-alloc-sub").textContent = e.vaultTotalEth != null
+    ? `total ${Number(e.vaultTotalEth).toFixed(4)} · free ${Number(e.vaultUnallocatedEth ?? 0).toFixed(4)}` : "total — ETH";
+  const r = e.reputation || {};
+  $("fut-erc-rep").textContent = r.averageScore != null ? String(r.averageScore) : "—";
+  $("fut-erc-rep-sub").textContent = r.feedbackCount != null ? `${r.feedbackCount} ratings` : "— ratings";
+  const v = e.validation || {};
+  $("fut-erc-val").textContent = v.averageValidationScore != null ? String(v.averageValidationScore) : "—";
+  $("fut-erc-val-sub").textContent = v.attestationCount != null ? `${v.attestationCount} attestations` : "— attestations";
+  $("fut-erc-trades").textContent = e.tradeRecord?.count != null ? String(e.tradeRecord.count) : "—";
+  $("fut-erc-trades-sub").textContent = e.intentNonce != null ? `nonce #${e.intentNonce}` : "nonce —";
+  $("fut-erc-bal").textContent = e.walletBalanceEth != null ? Number(e.walletBalanceEth).toFixed(5) + " ETH" : "— ETH";
+  const link = $("fut-erc-link");
+  if (e.walletAddress) {
+    link.textContent = shortAddr(e.walletAddress);
+    link.href = explorerAddr(e.walletAddress);
+  } else { link.textContent = "—"; link.href = "#"; }
+}
+
 function renderFutures(snap) {
+  renderFuturesErc(snap);
   const f = snap.futures;
   if (!f) return;
   state.futCfg = f.cfg;

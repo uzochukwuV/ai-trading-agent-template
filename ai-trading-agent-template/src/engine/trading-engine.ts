@@ -756,6 +756,19 @@ export class TradingEngine extends EventEmitter {
     const sessionMult = this.session.sizingMultiplier ?? 1;
     const adjConf = Math.max(0.1, Math.min(1, decision.confidence * sessionMult));
     const targetNotional = baseNotional * hint * adjConf;
+
+    // ── On-chain RiskRouter gate for futures (ERC-8004) ────────────────────
+    const gate = await this.erc8004.gateTrade({
+      pair,
+      side: decision.action as "BUY" | "SELL",
+      amountUsd: targetNotional,
+    }).catch(e => ({ approved: true, reason: `gate err: ${(e as Error).message}`, mode: "off" as const }));
+    if (!gate.approved) {
+      console.warn(`[engine] on-chain gate REJECTED futures ${decision.action} ${pair} $${targetNotional.toFixed(2)} — ${gate.reason}`);
+      return;
+    }
+    const intentHash = (gate as { intentHash?: string }).intentHash;
+
     const r = await this.futures.openPosition({
       pair,
       side: decision.action as "BUY" | "SELL",
@@ -765,7 +778,22 @@ export class TradingEngine extends EventEmitter {
     });
     if (!r.ok) {
       console.warn(`[engine] futures open ${pair} skipped: ${r.reason}`);
+      return;
     }
+
+    // ── Futures open attestation ───────────────────────────────────────────
+    const tk = this.ticks.get(pair);
+    const priceUsd = tk ? (decision.action === "BUY" ? tk.ask : tk.bid) : 0;
+    void this.erc8004.attestTrade({
+      pair, side: decision.action as "BUY" | "SELL", asset: pair,
+      amountUsd: targetNotional, priceUsd,
+      reasoning: `${decision.reasoning} | router: ${routerReason}`,
+      confidence: decision.confidence,
+      intentHash,
+      notes: `FUTURES OPEN ${decision.action} ${pair} notional=$${targetNotional.toFixed(2)} lev=${leverage}x`,
+    }).then(att => {
+      if (att?.checkpoint) appendCheckpointJsonl(dataPath("checkpoints.jsonl"), { kind: "futures-open", ...att.checkpoint });
+    }).catch(e => console.warn("[engine] attestTrade(futures-open) err:", (e as Error).message));
   }
 
   private openPosition(side: Action, pair: string, tick: Tick, qty: number, stop: number, tp: number, reasoning: string, source: any, intentHash?: string) {
